@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Review</h1>
+<p>Songs you played 3 or more times today whose Spotify match was not close enough to download on their own.</p>
+<ul class="songs">
+{% for row in rows %}
+  <li>
+    <div class="song">
+      <strong>{{ row.heard_title }}</strong>
+      <span>{{ row.heard_artist }}</span>
+      {% if row.spotify_url %}
+      <small>Spotify match: {{ row.candidate_title }} — {{ row.candidate_artist }}</small>
+      {% else %}
+      <small>No Spotify match found.</small>
+      {% endif %}
+    </div>
+    <button type="button" data-post="/api/review/{{ row.video_id | urlencode }}/download">
+      {% if row.spotify_url %}Download{% else %}Look up again{% endif %}
+    </button>
+  </li>
+{% else %}
+  <li>Nothing to review.</li>
+{% endfor %}
+</ul>
+{% endblock %}

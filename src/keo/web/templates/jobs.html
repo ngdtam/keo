@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Jobs</h1>
+<ul class="songs">
+{% for job in jobs %}
+  <li>
+    <div class="song">
+      <strong>{{ job.title }}</strong>
+      <span>{{ job.artist }}</span>
+      <small>{{ job.status }} · {{ job.source }} · {{ job.updated_at }}</small>
+      {% if job.error %}
+      <details><summary>spotDL output</summary><pre>{{ job.error }}</pre></details>
+      {% endif %}
+    </div>
+    {% if job.status == "failed" %}
+    <button type="button" data-post="/api/jobs/{{ job.id }}/retry">Retry</button>
+    {% endif %}
+  </li>
+{% else %}
+  <li>No downloads yet.</li>
+{% endfor %}
+</ul>
+{% endblock %}

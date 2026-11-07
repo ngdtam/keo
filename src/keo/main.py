@@ -14,6 +14,7 @@ from fastapi import FastAPI
 
 from keo.catalog import Catalog, open_ytmusic
 from keo.config import ConfigError, load_settings
+from keo.history import Scheduler
 from keo.jobs import Worker
 from keo.library import Library
 from keo.spotdl_cmd import Paths, Spotdl
@@ -44,10 +45,21 @@ def build_app() -> FastAPI:
         spotdl=spotdl,
     )
 
+    scheduler = Scheduler(
+        catalog=services.catalog,
+        library=library,
+        worker=worker,
+        spotdl=spotdl,
+        timezone=settings.history_timezone,
+        hour=settings.history_hour,
+    )
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         worker.start()
+        scheduler.start()
         yield
+        scheduler.stop()
         worker.stop()
 
     return create_app(services, lifespan=lifespan)
