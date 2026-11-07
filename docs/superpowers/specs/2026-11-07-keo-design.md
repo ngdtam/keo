@@ -156,6 +156,15 @@ History tests cover a close match queued, a weak match or no metadata sent to re
 
 HTTP tests cover 401 and 404 for the routes above.
 
+## Build order
+
+The phone pages stay a thin view over the JSON API. Each page is built in the same slice as the API it calls. Charts, moods, radio, and history wait until one manual download works, because they share that queue.
+
+1. Settings, the library, name matching, and the spotDL command, with tests and no pages.
+2. The download queue, then Search: login, the token check, `GET /api/search`, `GET /api/suggestions`, `POST /api/downloads`, and the Search page together.
+3. Charts, moods, playlists, and radio, reusing that download action.
+4. Review, Jobs, and the daily history check.
+
 ## Done
 
 Version 1 is done when the container starts with the example config, the five pages work behind the token, a tap downloads one song through spotDL, a second tap does not double-download, a file already in the library is skipped, and the daily history job follows the 3-play close-match rule.
