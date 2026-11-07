@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% from "_songs.html" import song_list %}
+{% block content %}
+<h1>{{ heading }}</h1>
+{{ song_list(songs) }}
+{% endblock %}

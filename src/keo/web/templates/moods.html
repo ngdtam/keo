@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Moods</h1>
+{% for section, moods in sections.items() %}
+<h2>{{ section }}</h2>
+<ul class="links">
+  {% for mood in moods %}
+  <li><a href="/moods/{{ mood.params | urlencode }}">{{ mood.title }}</a></li>
+  {% endfor %}
+</ul>
+{% endfor %}
+{% endblock %}
