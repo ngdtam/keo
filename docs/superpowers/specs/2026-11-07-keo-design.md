@@ -37,9 +37,10 @@ Compose sets these environment variables:
 | --- | --- |
 | `KEO_TOKEN` | Shared secret |
 | `KEO_MUSIC_DIR` | Music volume mount |
-| `KEO_DATA_DIR` | SQLite file and the spotDL archive |
+| `KEO_DATA_DIR` | SQLite file and the spotDL archive. Default `/data` |
 | `KEO_YTM_AUTH` | Path to `browser.json` or the OAuth file |
-| `KEO_CONFIG` | Path to `keo.toml` |
+| `KEO_YTM_CLIENT_ID`, `KEO_YTM_CLIENT_SECRET` | Required only when `KEO_YTM_AUTH` is an OAuth file. `ytmusicapi` needs them to use OAuth |
+| `KEO_CONFIG` | Path to `keo.toml`. Default `/config/keo.toml`. A missing file means every default |
 
 Credential files are mounted read-only. Kéo does not load a spotDL `config.json`. The container home has none, so a leftover spotDL config cannot override the library rules.
 
@@ -111,7 +112,7 @@ The play count for a decision is the number of `history_items` in the latest `ok
 
 For each qualifier, the worker does the same metadata lookup. A close match is queued for download of that Spotify URL with source `history`. The review row for that `video_id`, if one exists, is removed when the song becomes owned. A weak match or no metadata result inserts one review row when that `video_id` is not already on the list, and leaves an existing row unchanged.
 
-**Owned.** Before lookup, a song is owned when its `video_id` is in `songs`, or its normalized artist and title are in `songs`, or its Spotify id is in `songs` or in the spotDL archive. During download, `--overwrite skip` and `--detect-formats` also treat an existing file in the music folder as owned. Exit code 0 marks the song owned, whether spotDL wrote a new file or skipped one that was already there.
+**Owned.** Before lookup, a song is owned when its `video_id` is in `songs`, or its normalized artist and title are in `songs`, or its Spotify id is in `songs` or in the spotDL archive. During download, `--overwrite skip` and `--detect-formats` also treat an existing file in the music folder as owned. A download is finished when spotDL exits 0 and the Spotify URL is in the archive. spotDL exits 0 even when the one song fails, and it adds the URL to the archive only after it wrote the file or skipped one that was already there. A finished download marks the song owned.
 
 **Review tap.** Downloads the stored Spotify URL. It does not search again. A `no_metadata` row has no URL, so its action is a new metadata lookup using the heard name, and the usual close or weak result.
 
@@ -138,7 +139,7 @@ The browser signs in by posting the token to `/login`. A match sets an httpOnly 
 
 Startup exits before serving when `KEO_TOKEN`, `KEO_MUSIC_DIR`, or `KEO_YTM_AUTH` is missing, when `keo.toml` is invalid, when `generate_lrc` is true and `synced` is not in `lyrics`, or when `cookie_file` is set and the file is missing. The message names the setting.
 
-A missing or wrong token is 401. YouTube Music down, or an auth file it rejects, is 502 with a short reason, and the page shows that text. An unknown job is 404.
+A JSON API call with a missing or wrong token is 401. A page opened without a session redirects to `/login`, and a wrong token posted there is 401. YouTube Music down, or an auth file it rejects, is 502 with a short reason, and the page shows that text. An unknown job is 404.
 
 A failed download stores the last 40 lines of spotDL output on the job, does not insert a `songs` row, and the worker moves to the next job. Nothing retries by itself. Retry queues that same Spotify URL. The process stays up when a cookie or login expires during a download.
 
@@ -150,7 +151,7 @@ Automated tests do not call YouTube or Spotify. Catalog and the spotDL process a
 
 Pure tests cover `normalize` and `is_close`, the 3-play `Today` rule, library ownership, startup rejection of a bad `keo.toml`, and the argument builder. The builder always includes the owned flags. A regular config omits `--cookie-file` and uses `mp3` and `128k`. A premium config passes the cookie path, `opus` or `m4a`, and bitrate `disable`.
 
-Job tests cover one tap creating one job, a second tap reusing it, exit 0 marking the song owned, a non-zero exit marking the job `failed` without a `songs` row and then continuing, and Retry requeueing the same URL.
+Job tests cover one tap creating one job, a second tap reusing it, a finished download marking the song owned, exit 0 without an archive entry marking the job `failed`, a non-zero exit marking the job `failed` without a `songs` row and then continuing, and Retry requeueing the same URL.
 
 History tests cover a close match queued, a weak match or no metadata sent to review, owned songs skipped, one song’s failure leaving the rest of the pull running, and a failed `get_history` leaving review and `songs` unchanged.
 
