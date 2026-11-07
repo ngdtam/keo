@@ -1,0 +1,11 @@
+.git
+.venv
+.env
+keo.toml
+data
+music
+secrets
+docs
+tests
+ytmusicapi
+spotify-downloader
