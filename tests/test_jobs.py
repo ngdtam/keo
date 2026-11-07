@@ -122,7 +122,8 @@ def test_started_worker_runs_the_queue(worker, library, spotdl):
     assert library.get_job(job.id).status == "succeeded"
 
 
-def test_queue_error_does_not_kill_the_worker(worker, library):
+def test_queue_error_does_not_kill_the_worker(worker, library, monkeypatch):
+    monkeypatch.setattr("keo.jobs.IDLE_WAIT_SECONDS", 0.01)
     claims = []
 
     def claim_next():
@@ -134,7 +135,7 @@ def test_queue_error_does_not_kill_the_worker(worker, library):
     library.claim_next = claim_next
     worker.start()
     try:
-        deadline = time.monotonic() + 6
+        deadline = time.monotonic() + 2
         while len(claims) < 2 and time.monotonic() < deadline:
             time.sleep(0.05)
         assert len(claims) >= 2
