@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "keo"
+version = "0.1.0"
+description = "Find music on YouTube Music and download it with spotDL."
+requires-python = ">=3.11,<3.16"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.23.2,<0.24",
+    "jinja2>=3.1,<4",
+    "python-multipart>=0.0.18",
+    "ytmusicapi>=1.12.1,!=1.12.2,!=1.12.3,<2",
+    "spotdl>=4.6,<5",
+    "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+keo = ["web/templates/*.html", "web/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,45 @@
+# Kéo settings. Copy this file to keo.toml, edit it, and restart Kéo.
+# Every value below is the default. Delete a line to keep its default.
+
+# Audio
+# YouTube Music Premium only: set cookie_file to your cookies.txt, change
+# format to "opus" or "m4a", and change bitrate to "disable". That keeps the
+# 256 kbps file. A regular account is capped at 128 kbps, so a higher bitrate
+# only makes a larger file of the same audio.
+cookie_file = ""               # for example "/secrets/cookies.txt"
+format = "mp3"                 # mp3, m4a, opus, ogg, flac, wav
+bitrate = "128k"               # auto, disable, 8k ... 320k, or 0-9
+audio = ["youtube-music"]      # youtube-music, youtube, soundcloud, bandcamp, piped
+sponsor_block = false
+ffmpeg_args = ""
+
+# Lyrics and tags
+lyrics = ["genius", "azlyrics", "musixmatch"]   # genius, musixmatch, azlyrics, synced
+genius_access_token = ""
+generate_lrc = false           # needs "synced" in lyrics
+id3_separator = "/"            # mp3 only
+skip_album_art = false
+
+# Matching
+search_query = ""
+album_type = ""                # "", "single", "album", or "compilation"
+only_verified_results = false
+dont_filter_results = false
+skip_explicit = false
+
+# File names inside the music folder
+output_template = "{artists} - {title}.{output-ext}"
+restrict = ""                  # "", "strict", "ascii", or "none"
+max_filename_length = 0        # 0 leaves the limit to spotDL and the OS
+
+# Advanced
+proxy = ""
+yt_dlp_args = ""
+preload = false
+max_retries = 3
+client_id = ""                 # your own Spotify app, only if the public lookup fails
+client_secret = ""
+
+# Daily history check
+history_timezone = "Asia/Ho_Chi_Minh"
+history_hour = 23              # 23 means 23:00
