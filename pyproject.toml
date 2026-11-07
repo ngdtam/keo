@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "keo"
 version = "0.1.0"
-description = "Find music on YouTube Music and download it with spotDL."
+description = "Kéo searches YouTube Music and downloads songs with spotDL."
 requires-python = ">=3.11,<3.16"
 dependencies = [
     "fastapi>=0.115,<1",
