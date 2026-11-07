@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Kéo{% endblock %}</title>
+  <link rel="stylesheet" href="/static/keo.css">
+  <script src="/static/keo.js" defer></script>
+</head>
+<body>
+  <nav>
+    <a href="/">Search</a>
+    <a href="/charts">Charts</a>
+    <a href="/moods">Moods</a>
+    <a href="/review">Review</a>
+    <a href="/jobs">Jobs</a>
+  </nav>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>

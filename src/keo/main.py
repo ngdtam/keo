@@ -1,0 +1,53 @@
+"""Start Kéo: read settings, open the library, and serve the app.
+
+Run with: uvicorn --factory keo.main:build_app
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import sys
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
+
+from keo.catalog import Catalog, open_ytmusic
+from keo.config import ConfigError, load_settings
+from keo.jobs import Worker
+from keo.library import Library
+from keo.spotdl_cmd import Paths, Spotdl
+from keo.web import Services, create_app
+
+
+def build_app() -> FastAPI:
+    logging.basicConfig(level=logging.INFO)
+    try:
+        settings = load_settings(os.environ)
+    except ConfigError as exc:
+        sys.exit(f"Kéo cannot start: {exc}")
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    paths = Paths(settings.music_dir, settings.data_dir)
+    library = Library(settings.data_dir / "keo.db", paths.archive)
+    library.requeue_running()
+    spotdl = Spotdl(settings.spotdl, paths)
+    worker = Worker(library, spotdl)
+    try:
+        ytm = open_ytmusic(settings.ytm_auth, settings.ytm_client_id, settings.ytm_client_secret)
+    except Exception as exc:
+        sys.exit(f"Kéo cannot start: KEO_YTM_AUTH could not be loaded: {exc}")
+    services = Services(
+        token=settings.token,
+        catalog=Catalog(ytm),
+        library=library,
+        worker=worker,
+        spotdl=spotdl,
+    )
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        worker.start()
+        yield
+        worker.stop()
+
+    return create_app(services, lifespan=lifespan)

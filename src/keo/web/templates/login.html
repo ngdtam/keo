@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Kéo</h1>
+<form method="post" action="/login">
+  <input type="password" name="token" placeholder="Token" autocomplete="current-password" required>
+  <button>Sign in</button>
+</form>
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+{% endblock %}

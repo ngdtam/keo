@@ -1,9 +1,18 @@
 """Test doubles for YouTube Music and spotDL."""
 
+from keo.catalog import CatalogError
+from keo.records import MoodRef, PlaylistRef, SongRow
 from keo.spotdl_cmd import Candidate, DownloadResult, Lookup
 
 TOKEN = "test-token"
 QUERY = "Sơn Tùng M-TP - Lạc Trôi"
+SONG = SongRow("vid1", "Lạc Trôi", ("Sơn Tùng M-TP",), "Lạc Trôi")
+SONG_JSON = {
+    "video_id": "vid1",
+    "title": "Lạc Trôi",
+    "artists": ["Sơn Tùng M-TP"],
+    "album": "Lạc Trôi",
+}
 
 
 def candidate(name="Lạc Trôi", artist="Sơn Tùng M-TP", song_id="sp1"):
@@ -14,6 +23,51 @@ def candidate(name="Lạc Trôi", artist="Sơn Tùng M-TP", song_id="sp1"):
         url=f"https://open.spotify.com/track/{song_id}",
         song_id=song_id,
     )
+
+
+class FakeCatalog:
+    def __init__(self):
+        self.songs = [SONG]
+        self.history_items = []
+        self.radio_calls = []
+        self.fail = False
+
+    def _check(self):
+        if self.fail:
+            raise CatalogError("YouTube Music request failed: offline")
+
+    def search(self, query):
+        self._check()
+        return self.songs
+
+    def suggestions(self, query):
+        self._check()
+        return [f"{query} remix"]
+
+    def charts(self):
+        self._check()
+        return [PlaylistRef("PLvn", "Top 100 Songs Vietnam")]
+
+    def moods(self):
+        self._check()
+        return {"Moods & moments": [MoodRef("ggMchill", "Chill")]}
+
+    def mood_playlists(self, params):
+        self._check()
+        return [PlaylistRef("PLchill", "Chill Vibes")]
+
+    def playlist(self, playlist_id):
+        self._check()
+        return "Top 100 Songs Vietnam", self.songs
+
+    def radio(self, video_id):
+        self._check()
+        self.radio_calls.append(video_id)
+        return self.songs
+
+    def history(self):
+        self._check()
+        return self.history_items
 
 
 class FakeSpotdl:

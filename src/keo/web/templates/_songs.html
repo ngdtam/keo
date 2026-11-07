@@ -1,0 +1,16 @@
+{% macro song_list(songs) %}
+<ul class="songs">
+{% for song in songs %}
+  <li>
+    <div class="song">
+      <strong>{{ song.title }}</strong>
+      <span>{{ song.artists | join(", ") }}</span>
+    </div>
+    <a href="/songs/{{ song.video_id | urlencode }}/radio">Radio</a>
+    <button type="button" data-download='{{ {"video_id": song.video_id, "title": song.title, "artists": song.artists | list} | tojson }}'>Download</button>
+  </li>
+{% else %}
+  <li>No songs.</li>
+{% endfor %}
+</ul>
+{% endmacro %}

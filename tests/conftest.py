@@ -1,8 +1,10 @@
 import pytest
+from fastapi.testclient import TestClient
 
 from keo.jobs import Worker
 from keo.library import Library
-from tests.fakes import FakeSpotdl
+from keo.web import Services, create_app
+from tests.fakes import TOKEN, FakeCatalog, FakeSpotdl
 
 
 @pytest.fixture
@@ -18,3 +20,33 @@ def spotdl():
 @pytest.fixture
 def worker(library, spotdl):
     return Worker(library, spotdl)
+
+
+@pytest.fixture
+def catalog():
+    return FakeCatalog()
+
+
+@pytest.fixture
+def client(catalog, library, worker, spotdl):
+    services = Services(
+        token=TOKEN,
+        catalog=catalog,
+        library=library,
+        worker=worker,
+        spotdl=spotdl,
+        run_later=lambda fn: fn(),
+    )
+    with TestClient(create_app(services)) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def auth():
+    return {"Authorization": f"Bearer {TOKEN}"}
+
+
+@pytest.fixture
+def logged_in(client):
+    client.post("/login", data={"token": TOKEN})
+    return client
