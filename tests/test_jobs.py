@@ -120,3 +120,25 @@ def test_started_worker_runs_the_queue(worker, library, spotdl):
     finally:
         worker.stop()
     assert library.get_job(job.id).status == "succeeded"
+
+
+def test_queue_error_does_not_kill_the_worker(worker, library):
+    claims = []
+
+    def claim_next():
+        claims.append(1)
+        if len(claims) == 1:
+            raise RuntimeError("queue error")
+        return None
+
+    library.claim_next = claim_next
+    worker.start()
+    try:
+        deadline = time.monotonic() + 6
+        while len(claims) < 2 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert len(claims) >= 2
+        assert worker._thread.is_alive()
+    finally:
+        worker.stop()
+    assert not worker._thread.is_alive()

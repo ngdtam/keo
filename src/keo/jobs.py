@@ -67,9 +67,15 @@ class Worker:
 
     def _loop(self) -> None:
         while not self._stop.is_set():
-            if not self.run_once():
-                self._wake.wait(timeout=IDLE_WAIT_SECONDS)
-                self._wake.clear()
+            try:
+                if self.run_once():
+                    continue
+            except Exception:
+                log.exception("Download worker crashed")
+                if self._stop.is_set():
+                    break
+            self._wake.wait(timeout=IDLE_WAIT_SECONDS)
+            self._wake.clear()
 
     def _process(self, job: Job) -> None:
         url, spotify_id = job.spotify_url, job.spotify_id
