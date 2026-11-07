@@ -9,3 +9,5 @@ keo.toml
 data/
 music/
 secrets/
+.DS_Store
+docs/superpowers/
