@@ -14,6 +14,7 @@ dependencies = [
     "python-multipart>=0.0.18",
     "ytmusicapi>=1.12.1,!=1.12.2,!=1.12.3,<2",
     "spotdl>=4.6,<5",
+    "pymediainfo>=7.0,<8",
     "tzdata>=2024.1",
 ]
 

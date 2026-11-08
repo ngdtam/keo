@@ -10,10 +10,28 @@
 {% if song.path %}
 <p class="text-secondary">{{ song.path }} · {{ song.size }} bytes</p>
 {% endif %}
+{% if song.details %}
+<dl class="mb-3">
+  {% for label, value in song.details %}
+  <dt>{{ label }}</dt>
+  <dd>{{ value }}</dd>
+  {% endfor %}
+</dl>
+{% endif %}
+{% if notice %}
+<p>{{ notice }}</p>
+{% endif %}
 {% if song.can_delete %}
-<form method="post" action="/library/spotify/{{ song.ident }}/delete" class="mb-3">
-  <button class="btn">Delete</button>
-</form>
+<div class="d-flex gap-2 mb-3">
+  <form method="post" action="/library/spotify/{{ song.ident }}/delete">
+    <input type="hidden" name="scope" value="file">
+    <button class="btn">Remove file</button>
+  </form>
+  <form method="post" action="/library/spotify/{{ song.ident }}/delete">
+    <input type="hidden" name="scope" value="library">
+    <button class="btn">Remove from library</button>
+  </form>
+</div>
 {% endif %}
 <div class="card">
   <ul class="list-group list-group-flush">

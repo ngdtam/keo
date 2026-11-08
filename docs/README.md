@@ -27,6 +27,8 @@
    docker compose logs -f keo
    ```
 
+   The image includes Debian's libmediainfo so the library page can show a file's codec and bitrate. A run outside Docker needs `brew install media-info`. Without that library the pages still load and the technical text is absent.
+
 5. Open `http://<server>:8000` on your phone and sign in with `KEO_TOKEN`. To reach the server from outside your home network, use your own VPN or tunnel.
 
 A choice on the Settings page is saved into `keo.toml` and used on the next download. A hand edit of `keo.toml` still needs `docker compose restart keo`.
