@@ -19,11 +19,11 @@
         <div class="collapse navbar-collapse" id="navbar-menu">
           <ul class="navbar-nav">
             <li class="nav-item"><a class="nav-link{% if path == '/' %} active{% endif %}" href="/" {% if path == '/' %}aria-current="page"{% endif %}>Home</a></li>
+            <li class="nav-item"><a class="nav-link{% if path.startswith('/library') %} active{% endif %}" href="/library" {% if path.startswith('/library') %}aria-current="page"{% endif %}>Library</a></li>
             <li class="nav-item"><a class="nav-link{% if path == '/search' %} active{% endif %}" href="/search" {% if path == '/search' %}aria-current="page"{% endif %}>Search</a></li>
             <li class="nav-item"><a class="nav-link{% if path == '/charts' or path.startswith('/playlists/') %} active{% endif %}" href="/charts" {% if path == '/charts' or path.startswith('/playlists/') %}aria-current="page"{% endif %}>Charts</a></li>
             <li class="nav-item"><a class="nav-link{% if path == '/moods' or path.startswith('/moods/') %} active{% endif %}" href="/moods" {% if path == '/moods' or path.startswith('/moods/') %}aria-current="page"{% endif %}>Moods</a></li>
             <li class="nav-item"><a class="nav-link{% if path == '/review' %} active{% endif %}" href="/review" {% if path == '/review' %}aria-current="page"{% endif %}>Review</a></li>
-            <li class="nav-item"><a class="nav-link{% if path == '/jobs' %} active{% endif %}" href="/jobs" {% if path == '/jobs' %}aria-current="page"{% endif %}>Jobs</a></li>
             <li class="nav-item"><a class="nav-link{% if path == '/settings' %} active{% endif %}" href="/settings" {% if path == '/settings' %}aria-current="page"{% endif %}>Settings</a></li>
           </ul>
         </div>

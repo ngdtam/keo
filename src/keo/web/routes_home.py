@@ -22,9 +22,23 @@ def home_page(request: Request, q: str = ""):
     services = get_services(request)
     jobs = services.library.list_jobs()
     context = _context(request)
+    seen: set[str] = set()
+    attention = []
+    for job in jobs:
+        if job.status not in {"queued", "running", "failed"}:
+            continue
+        href = (
+            f"/library/spotify/{job.spotify_id}" if job.spotify_id
+            else f"/library/video/{job.video_id}"
+        )
+        if href in seen:
+            continue
+        seen.add(href)
+        attention.append({"href": href, "artist": job.artist, "title": job.title})
     context.update(
         review_count=len(services.library.list_review()),
         active_count=sum(job.status in {"queued", "running"} for job in jobs),
         failed_count=sum(job.status == "failed" for job in jobs),
+        attention=attention,
     )
     return TEMPLATES.TemplateResponse(request, "home.html", context)

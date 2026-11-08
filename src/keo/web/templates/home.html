@@ -17,7 +17,10 @@
         <div class="subheader">Jobs</div>
         <div>{{ active_count }} queued or running</div>
         <div class="mb-2">{{ failed_count }} failed</div>
-        <a href="/jobs">Jobs</a>
+        {% for song in attention %}
+        <div><a href="{{ song.href }}">{{ song.title }}</a> {{ song.artist }}</div>
+        {% endfor %}
+        <a href="/library">Library</a>
       </div>
     </div>
   </div>

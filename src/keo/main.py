@@ -32,7 +32,7 @@ def build_app() -> FastAPI:
     library = Library(settings.data_dir / "keo.db", paths.archive)
     library.requeue_running()
     spotdl = Spotdl(settings.spotdl, paths)
-    worker = Worker(library, spotdl)
+    worker = Worker(library, spotdl, settings.music_dir)
     try:
         ytm = open_ytmusic(settings.ytm_auth, settings.ytm_client_id, settings.ytm_client_secret)
     except Exception as exc:
@@ -49,6 +49,7 @@ def build_app() -> FastAPI:
         ytm_client_secret=settings.ytm_client_secret,
         timezone=settings.history_timezone,
         data_dir=settings.data_dir,
+        music_dir=settings.music_dir,
     )
 
     scheduler = Scheduler(

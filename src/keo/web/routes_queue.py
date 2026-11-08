@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
 from keo.history import decide
@@ -85,17 +84,7 @@ def api_review_download(request: Request, video_id: str):
 
 @router.get("/jobs", **PAGE)
 def jobs_page(request: Request):
-    services = get_services(request)
-    jobs = [
-        SimpleNamespace(
-            id=job.id, title=job.title, artist=job.artist, status=job.status,
-            source=job.source, error=job.error,
-            when=format_job_time(job.updated_at, services.timezone),
-            detail=_detail(job),
-        )
-        for job in services.library.list_jobs()
-    ]
-    return TEMPLATES.TemplateResponse(request, "jobs.html", {"jobs": jobs})
+    return RedirectResponse("/library", status_code=303)
 
 
 @router.get("/api/jobs", **API)

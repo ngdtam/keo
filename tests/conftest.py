@@ -28,7 +28,9 @@ def catalog():
 
 
 @pytest.fixture
-def client(catalog, library, worker, spotdl):
+def client(catalog, library, worker, spotdl, tmp_path):
+    music = tmp_path / "music"
+    music.mkdir(exist_ok=True)
     services = Services(
         token=TOKEN,
         catalog=catalog,
@@ -36,6 +38,7 @@ def client(catalog, library, worker, spotdl):
         worker=worker,
         spotdl=spotdl,
         run_later=lambda fn: fn(),
+        music_dir=music,
     )
     with TestClient(create_app(services)) as test_client:
         yield test_client

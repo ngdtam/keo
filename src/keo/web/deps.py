@@ -39,6 +39,7 @@ class Services:
     ytm_client_secret: str = ""
     timezone: str = "Asia/Ho_Chi_Minh"
     data_dir: Path | None = None
+    music_dir: Path | None = None
 
 
 class LoginRequired(Exception):
