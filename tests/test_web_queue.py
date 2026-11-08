@@ -92,14 +92,14 @@ def test_job_time_uses_the_configured_zone():
 
 def test_jobs_page_shows_a_new_pull(logged_in, library):
     job = library.enqueue("vid9", "Đen", "Pulled", source="manual", format="opus", premium=1)
-    text = logged_in.get("/jobs").text
+    text = logged_in.get(f"/library/video/{job.video_id}").text
     assert format_job_time(job.updated_at, "Asia/Ho_Chi_Minh") in text
     assert "opus · .opus · Premium" in text
 
 
 def test_jobs_page_hides_pull_facts_when_they_were_not_stored(logged_in, library):
     job = library.enqueue("vid8", "Đen", "Old Song", source="manual")
-    text = logged_in.get("/jobs").text
+    text = logged_in.get(f"/library/video/{job.video_id}").text
     assert format_job_time(job.updated_at, "Asia/Ho_Chi_Minh") in text
     assert "Premium" not in text
     assert ".mp3" not in text
@@ -111,6 +111,7 @@ def test_review_and_jobs_pages(logged_in, library, worker):
     review = logged_in.get("/review")
     assert review.status_code == 200
     assert "Một Bài Khác" in review.text
-    jobs = logged_in.get("/jobs")
-    assert jobs.status_code == 200
-    assert "Bài Này Chill Phết" in jobs.text
+    jobs = logged_in.get("/jobs", follow_redirects=False)
+    assert jobs.status_code == 303
+    assert jobs.headers["location"] == "/library"
+    assert "Bài Này Chill Phết" in logged_in.get("/library").text

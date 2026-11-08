@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Library{% endblock %}
+{% block content %}
+<h2 class="page-title mb-3">Library</h2>
+<div class="row row-cards">
+  {% for row in rows %}
+  <div class="col-6 col-sm-4 col-lg-3">
+    <a href="{{ row.href }}" class="card card-link h-100">
+      <div class="ratio ratio-1x1 bg-secondary-lt">
+        {% if row.cover %}
+        <img src="{{ row.cover }}" alt="" class="object-fit-cover">
+        {% endif %}
+      </div>
+      <div class="card-body p-2">
+        <div class="fw-bold text-truncate">{{ row.title }}</div>
+        <div class="text-secondary text-truncate">{{ row.artist }}</div>
+      </div>
+      <div class="bg-{{ row.color }}" style="height: .4rem"></div>
+    </a>
+  </div>
+  {% else %}
+  <div class="col-12">No songs.</div>
+  {% endfor %}
+</div>
+<div class="d-flex flex-wrap gap-3 mt-4">
+  <div><span class="d-inline-block bg-green me-1" style="width: 2rem; height: .4rem"></span>On disk</div>
+  <div><span class="d-inline-block bg-red me-1" style="width: 2rem; height: .4rem"></span>Missing</div>
+  <div><span class="d-inline-block bg-yellow me-1" style="width: 2rem; height: .4rem"></span>Queued or running</div>
+</div>
+{% endblock %}

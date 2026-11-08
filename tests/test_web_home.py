@@ -38,7 +38,7 @@ def test_dashboard_shows_zero_counts(logged_in):
     assert "0 queued or running" in text
     assert "0 failed" in text
     assert 'href="/review"' in text
-    assert 'href="/jobs"' in text
+    assert 'href="/library"' in text
 
 
 def test_dashboard_counts_review_and_jobs(logged_in, library):

@@ -12,9 +12,39 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from keo.archive import archive_ids
+from keo.archive import archive_ids, drop_track
 from keo.match import normalize
 from keo.records import HistoryItem
+
+AUDIO_EXT = {".mp3", ".m4a", ".opus", ".ogg", ".flac", ".wav"}
+
+
+def list_audio(folder: Path) -> set[Path]:
+    if not folder.is_dir():
+        return set()
+    return {path for path in folder.iterdir() if path.is_file() and path.suffix.lower() in AUDIO_EXT}
+
+
+def unique_title_file(folder: Path, titles: set[str]) -> Path | None:
+    found: list[Path] = []
+    for path in list_audio(folder):
+        for title in titles:
+            if title and path.stem.endswith(f" - {title}"):
+                found.append(path)
+                break
+    if len(found) == 1:
+        return found[0]
+    return None
+
+
+def inside_music(music: Path, candidate: Path) -> bool:
+    root = music.resolve()
+    try:
+        resolved = candidate.resolve()
+    except OSError:
+        return False
+    return resolved == root or root in resolved.parents
+
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS history_pulls (
@@ -121,11 +151,14 @@ class Library:
         self._db.execute("PRAGMA journal_mode = WAL")
         self._db.executescript(SCHEMA)
         columns = {row[1] for row in self._db.execute("PRAGMA table_info(jobs)")}
+        song_columns = {row[1] for row in self._db.execute("PRAGMA table_info(songs)")}
         with self._db:
             if "format" not in columns:
                 self._db.execute("ALTER TABLE jobs ADD COLUMN format TEXT")
             if "premium" not in columns:
                 self._db.execute("ALTER TABLE jobs ADD COLUMN premium INTEGER")
+            if "audio_path" not in song_columns:
+                self._db.execute("ALTER TABLE songs ADD COLUMN audio_path TEXT")
 
     # Owned songs
 
@@ -143,6 +176,40 @@ class Library:
                 "SELECT 1 FROM songs WHERE spotify_id = ?", (spotify_id,)
             ).fetchone()
         return row is not None or spotify_id in archive_ids(self._archive_path)
+
+    def has_spotify(self, spotify_id: str) -> bool:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT 1 FROM songs WHERE spotify_id = ?", (spotify_id,)
+            ).fetchone()
+        return row is not None
+
+    def audio_path(self, spotify_id: str) -> str | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT audio_path FROM songs WHERE spotify_id = ?", (spotify_id,)
+            ).fetchone()
+        if row is None or row["audio_path"] is None:
+            return None
+        return str(row["audio_path"])
+
+    def song_title(self, spotify_id: str) -> str | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT title FROM songs WHERE spotify_id = ?", (spotify_id,)
+            ).fetchone()
+        return str(row["title"]) if row else None
+
+    def set_audio_path(self, spotify_id: str, path: str) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "UPDATE songs SET audio_path = ? WHERE spotify_id = ?", (path, spotify_id)
+            )
+
+    def forget_spotify(self, spotify_id: str) -> None:
+        drop_track(self._archive_path, spotify_id)
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM songs WHERE spotify_id = ?", (spotify_id,))
 
     def mark_owned(self, video_id: str, artist: str, title: str, spotify_id: str | None) -> None:
         with self._lock, self._db:

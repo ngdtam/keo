@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import threading
+from pathlib import Path
 
 from keo.config import cookie_ready
-from keo.library import Job, Library
+from keo.library import Job, Library, list_audio
 from keo.spotdl_cmd import Spotdl
 
 log = logging.getLogger(__name__)
@@ -14,9 +15,10 @@ IDLE_WAIT_SECONDS = 5
 
 
 class Worker:
-    def __init__(self, library: Library, spotdl: Spotdl) -> None:
+    def __init__(self, library: Library, spotdl: Spotdl, music_dir: Path | None = None) -> None:
         self._library = library
         self._spotdl = spotdl
+        self._music = music_dir
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -101,9 +103,13 @@ class Worker:
             self._library.finish(job.id, ok=True)
             return
 
+        before = list_audio(self._music) if self._music else set()
         result = self._spotdl.download(url, spotify_id)
         if result.ok:
             self._library.mark_owned(job.video_id, job.artist, job.title, spotify_id)
+            appeared = list_audio(self._music) - before if self._music else set()
+            if spotify_id and len(appeared) == 1:
+                self._library.set_audio_path(spotify_id, str(appeared.pop()))
             self._library.finish(job.id, ok=True)
         else:
             self._library.finish(job.id, ok=False, error=result.output)

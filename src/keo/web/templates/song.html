@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}{{ song.title }}{% endblock %}
+{% block content %}
+<h2 class="page-title mb-1">{{ song.title }}</h2>
+<p>{{ song.artist }}</p>
+<p>
+  <span class="status-dot bg-{{ song.color }}"></span>
+  {{ song.label }}
+</p>
+{% if song.path %}
+<p class="text-secondary">{{ song.path }} · {{ song.size }} bytes</p>
+{% endif %}
+{% if song.can_delete %}
+<form method="post" action="/library/spotify/{{ song.ident }}/delete" class="mb-3">
+  <button class="btn">Delete</button>
+</form>
+{% endif %}
+<div class="card">
+  <ul class="list-group list-group-flush">
+  {% for job in jobs %}
+    <li class="list-group-item">
+      <div class="text-secondary">{{ job.line }}</div>
+      {% if job.error %}
+      <details><summary>spotDL output</summary><pre class="mb-0">{{ job.error }}</pre></details>
+      {% endif %}
+      {% if job.status == "failed" %}
+      <button type="button" class="btn" data-post="/api/jobs/{{ job.id }}/retry">Retry</button>
+      {% endif %}
+    </li>
+  {% endfor %}
+  </ul>
+</div>
+{% endblock %}
