@@ -1,12 +1,15 @@
 {% extends "base.html" %}
+{% block title %}Moods{% endblock %}
 {% block content %}
-<h1>Moods</h1>
+<h2 class="page-title mb-3">Moods</h2>
 {% for section, moods in sections.items() %}
-<h2>{{ section }}</h2>
-<ul class="links">
-  {% for mood in moods %}
-  <li><a href="/moods/{{ mood.params | urlencode }}">{{ mood.title }}</a></li>
-  {% endfor %}
-</ul>
+<h3 class="mb-2">{{ section }}</h3>
+<div class="card mb-3">
+  <ul class="list-group list-group-flush">
+    {% for mood in moods %}
+    <li class="list-group-item"><a href="/moods/{{ mood.params | urlencode }}">{{ mood.title }}</a></li>
+    {% endfor %}
+  </ul>
+</div>
 {% endfor %}
 {% endblock %}

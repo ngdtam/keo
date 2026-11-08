@@ -1,23 +1,30 @@
 {% extends "base.html" %}
+{% block title %}Jobs{% endblock %}
 {% block content %}
-<h1>Jobs</h1>
-<ul class="songs">
-{% for job in jobs %}
-  <li>
-    <div class="song">
-      <strong>{{ job.title }}</strong>
-      <span>{{ job.artist }}</span>
-      <small>{{ job.status }} · {{ job.source }} · {{ job.updated_at }}</small>
-      {% if job.error %}
-      <details><summary>spotDL output</summary><pre>{{ job.error }}</pre></details>
-      {% endif %}
-    </div>
-    {% if job.status == "failed" %}
-    <button type="button" data-post="/api/jobs/{{ job.id }}/retry">Retry</button>
-    {% endif %}
-  </li>
-{% else %}
-  <li>No downloads yet.</li>
-{% endfor %}
-</ul>
+<h2 class="page-title mb-3">Jobs</h2>
+<div class="card">
+  <ul class="list-group list-group-flush">
+  {% for job in jobs %}
+    <li class="list-group-item">
+      <div class="row align-items-center">
+        <div class="col">
+          <div class="fw-bold">{{ job.title }}</div>
+          <div>{{ job.artist }}</div>
+          <div class="text-secondary">{{ job.status }} · {{ job.source }} · {{ job.when }}{{ job.detail }}</div>
+          {% if job.error %}
+          <details><summary>spotDL output</summary><pre class="mb-0">{{ job.error }}</pre></details>
+          {% endif %}
+        </div>
+        {% if job.status == "failed" %}
+        <div class="col-auto">
+          <button type="button" class="btn" data-post="/api/jobs/{{ job.id }}/retry">Retry</button>
+        </div>
+        {% endif %}
+      </div>
+    </li>
+  {% else %}
+    <li class="list-group-item">No downloads yet.</li>
+  {% endfor %}
+  </ul>
+</div>
 {% endblock %}

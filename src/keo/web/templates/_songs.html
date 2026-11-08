@@ -1,16 +1,22 @@
 {% macro song_list(songs) %}
-<ul class="songs">
-{% for song in songs %}
-  <li>
-    <div class="song">
-      <strong>{{ song.title }}</strong>
-      <span>{{ song.artists | join(", ") }}</span>
-    </div>
-    <a href="/songs/{{ song.video_id | urlencode }}/radio">Radio</a>
-    <button type="button" data-download='{{ {"video_id": song.video_id, "title": song.title, "artists": song.artists | list} | tojson }}'>Download</button>
-  </li>
-{% else %}
-  <li>No songs.</li>
-{% endfor %}
-</ul>
+<div class="card">
+  <ul class="list-group list-group-flush">
+  {% for song in songs %}
+    <li class="list-group-item">
+      <div class="row align-items-center">
+        <div class="col">
+          <div class="fw-bold">{{ song.title }}</div>
+          <div class="text-secondary">{{ song.artists | join(", ") }}</div>
+        </div>
+        <div class="col-auto">
+          <a class="btn" href="/songs/{{ song.video_id | urlencode }}/radio">Radio</a>
+          <button type="button" class="btn" data-download='{{ {"video_id": song.video_id, "title": song.title, "artists": song.artists | list} | tojson }}'>Download</button>
+        </div>
+      </div>
+    </li>
+  {% else %}
+    <li class="list-group-item">No songs.</li>
+  {% endfor %}
+  </ul>
+</div>
 {% endmacro %}

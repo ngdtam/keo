@@ -10,7 +10,7 @@ from keo.web.deps import TEMPLATES, get_services, require_api, require_page, son
 router = APIRouter()
 
 
-@router.get("/", response_class=HTMLResponse, dependencies=[Depends(require_page)])
+@router.get("/search", response_class=HTMLResponse, dependencies=[Depends(require_page)])
 def search_page(request: Request, q: str = ""):
     songs = get_services(request).catalog.search(q) if q.strip() else []
     return TEMPLATES.TemplateResponse(request, "search.html", {"q": q, "songs": songs})

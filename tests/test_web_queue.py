@@ -1,5 +1,6 @@
 import pytest
 
+from keo.web.routes_queue import format_job_time
 from tests.fakes import QUERY, candidate
 
 URL = "https://open.spotify.com/track/sp1"
@@ -83,6 +84,25 @@ def test_retry_a_failed_job(client, auth, worker, library):
 
 def test_retry_an_unknown_job_is_404(client, auth):
     assert client.post("/api/jobs/999/retry", headers=auth).status_code == 404
+
+
+def test_job_time_uses_the_configured_zone():
+    assert format_job_time("2026-11-07T15:00:00+00:00", "Asia/Ho_Chi_Minh") == "2026-11-07, 22:00"
+
+
+def test_jobs_page_shows_a_new_pull(logged_in, library):
+    job = library.enqueue("vid9", "Đen", "Pulled", source="manual", format="opus", premium=1)
+    text = logged_in.get("/jobs").text
+    assert format_job_time(job.updated_at, "Asia/Ho_Chi_Minh") in text
+    assert "opus · .opus · Premium" in text
+
+
+def test_jobs_page_hides_pull_facts_when_they_were_not_stored(logged_in, library):
+    job = library.enqueue("vid8", "Đen", "Old Song", source="manual")
+    text = logged_in.get("/jobs").text
+    assert format_job_time(job.updated_at, "Asia/Ho_Chi_Minh") in text
+    assert "Premium" not in text
+    assert ".mp3" not in text
 
 
 def test_review_and_jobs_pages(logged_in, library, worker):

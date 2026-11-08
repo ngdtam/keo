@@ -83,6 +83,8 @@ class Job:
     error: str | None
     created_at: str
     updated_at: str
+    format: str | None = None
+    premium: int | None = None
 
 
 @dataclass(frozen=True)
@@ -118,6 +120,12 @@ class Library:
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode = WAL")
         self._db.executescript(SCHEMA)
+        columns = {row[1] for row in self._db.execute("PRAGMA table_info(jobs)")}
+        with self._db:
+            if "format" not in columns:
+                self._db.execute("ALTER TABLE jobs ADD COLUMN format TEXT")
+            if "premium" not in columns:
+                self._db.execute("ALTER TABLE jobs ADD COLUMN premium INTEGER")
 
     # Owned songs
 
@@ -157,6 +165,8 @@ class Library:
         source: str,
         spotify_url: str | None = None,
         spotify_id: str | None = None,
+        format: str | None = None,
+        premium: int | None = None,
     ) -> Job:
         now = _now()
         with self._lock, self._db:
@@ -165,9 +175,9 @@ class Library:
                 return active
             cursor = self._db.execute(
                 "INSERT INTO jobs (video_id, artist, title, spotify_url, spotify_id,"
-                " status, source, created_at, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)",
-                (video_id, artist, title, spotify_url, spotify_id, source, now, now),
+                " status, source, format, premium, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)",
+                (video_id, artist, title, spotify_url, spotify_id, source, format, premium, now, now),
             )
             job = self._job(cursor.lastrowid)
         assert job is not None

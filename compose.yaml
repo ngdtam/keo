@@ -11,8 +11,9 @@ services:
       KEO_YTM_AUTH: /secrets/${KEO_YTM_AUTH_FILE:-browser.json}
       KEO_YTM_CLIENT_ID: ${KEO_YTM_CLIENT_ID:-}
       KEO_YTM_CLIENT_SECRET: ${KEO_YTM_CLIENT_SECRET:-}
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
     volumes:
       - ${KEO_MUSIC_PATH:-./music}:/music
       - ${KEO_DATA_PATH:-./data}:/data
-      - ${KEO_CONFIG_PATH:-./keo.toml}:/config/keo.toml:ro
+      - ${KEO_CONFIG_PATH:-./keo.toml}:/config/keo.toml
       - ${KEO_SECRETS_PATH:-./secrets}:/secrets:ro

@@ -142,6 +142,13 @@ class Spotdl:
         self._runner = runner
         self._lock = threading.Lock()
 
+    @property
+    def settings(self) -> SpotdlSettings:
+        return self._settings
+
+    def use(self, settings: SpotdlSettings) -> None:
+        self._settings = settings
+
     def lookup(self, query: str) -> Lookup:
         proc = self._run("save", query, SAVE_TIMEOUT_SECONDS)
         if proc is None:

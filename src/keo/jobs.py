@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 
+from keo.config import cookie_ready
 from keo.library import Job, Library
 from keo.spotdl_cmd import Spotdl
 
@@ -33,8 +34,12 @@ class Worker:
         """Queue one download. Returns None when the song is already owned."""
         if self._library.is_owned(video_id, artist, title):
             return None
+        settings = self._spotdl.settings
+        premium = int(cookie_ready(settings) and settings.format in {"opus", "m4a"})
         job = self._library.enqueue(
-            video_id, artist, title, source=source, spotify_url=spotify_url, spotify_id=spotify_id
+            video_id, artist, title,
+            source=source, spotify_url=spotify_url, spotify_id=spotify_id,
+            format=settings.format, premium=premium,
         )
         self._wake.set()
         return job

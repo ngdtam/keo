@@ -1,5 +1,6 @@
 {% extends "base.html" %}
+{% block title %}YouTube Music did not answer{% endblock %}
 {% block content %}
-<h1>YouTube Music did not answer</h1>
-<p class="error">{{ message }}</p>
+<h2 class="page-title mb-3">YouTube Music did not answer</h2>
+<div class="alert" role="alert">{{ message }}</div>
 {% endblock %}

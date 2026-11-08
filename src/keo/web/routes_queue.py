@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -21,6 +24,20 @@ class DownloadRequest(BaseModel):
     video_id: str
     title: str
     artists: list[str]
+
+
+def format_job_time(updated_at: str, zone: str) -> str:
+    instant = datetime.fromisoformat(updated_at)
+    if instant.tzinfo is None:
+        instant = instant.replace(tzinfo=timezone.utc)
+    return instant.astimezone(ZoneInfo(zone)).strftime("%Y-%m-%d, %H:%M")
+
+
+def _detail(job: Job) -> str:
+    if job.format is None:
+        return ""
+    premium = "Premium" if job.premium else "not Premium"
+    return f" · {job.format} · .{job.format} · {premium}"
 
 
 def queued(job: Job | None) -> dict:
@@ -68,7 +85,16 @@ def api_review_download(request: Request, video_id: str):
 
 @router.get("/jobs", **PAGE)
 def jobs_page(request: Request):
-    jobs = get_services(request).library.list_jobs()
+    services = get_services(request)
+    jobs = [
+        SimpleNamespace(
+            id=job.id, title=job.title, artist=job.artist, status=job.status,
+            source=job.source, error=job.error,
+            when=format_job_time(job.updated_at, services.timezone),
+            detail=_detail(job),
+        )
+        for job in services.library.list_jobs()
+    ]
     return TEMPLATES.TemplateResponse(request, "jobs.html", {"jobs": jobs})
 
 

@@ -33,6 +33,12 @@ class Services:
     worker: Worker
     spotdl: Spotdl
     run_later: Callable[[Callable[[], object]], None] = _start_thread
+    config_path: Path | None = None
+    ytm_auth: Path | None = None
+    ytm_client_id: str = ""
+    ytm_client_secret: str = ""
+    timezone: str = "Asia/Ho_Chi_Minh"
+    data_dir: Path | None = None
 
 
 class LoginRequired(Exception):

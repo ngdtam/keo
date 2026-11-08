@@ -1,10 +1,14 @@
 {% extends "base.html" %}
 {% from "_songs.html" import song_list %}
+{% block title %}Search{% endblock %}
 {% block content %}
-<form method="get" action="/">
-  <input name="q" value="{{ q }}" list="suggestions" placeholder="Song or artist" autocomplete="off" autofocus>
-  <datalist id="suggestions"></datalist>
-  <button>Search</button>
+<h2 class="page-title mb-3">Search</h2>
+<form method="get" action="/search" class="mb-3">
+  <div class="input-group">
+    <input class="form-control" name="q" value="{{ q }}" list="suggestions" placeholder="Song or artist" autocomplete="off" autofocus>
+    <datalist id="suggestions"></datalist>
+    <button class="btn">Search</button>
+  </div>
 </form>
 {% if q %}{{ song_list(songs) }}{% endif %}
 {% endblock %}

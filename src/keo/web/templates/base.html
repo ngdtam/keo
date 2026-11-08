@@ -4,17 +4,41 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Kéo{% endblock %}</title>
-  <link rel="stylesheet" href="/static/keo.css">
-  <script src="/static/keo.js" defer></script>
+  <link rel="stylesheet" href="/static/tabler.min.css">
 </head>
 <body>
-  <nav>
-    <a href="/">Search</a>
-    <a href="/charts">Charts</a>
-    <a href="/moods">Moods</a>
-    <a href="/review">Review</a>
-    <a href="/jobs">Jobs</a>
-  </nav>
-  <main>{% block content %}{% endblock %}</main>
+  {% set path = request.url.path %}
+  <div class="page">
+    {% if path != '/login' %}
+    <header class="navbar navbar-expand-md d-print-none">
+      <div class="container-xl">
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar-menu" aria-controls="navbar-menu" aria-expanded="false" aria-label="Open menu">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <a href="/" class="navbar-brand">Kéo</a>
+        <div class="collapse navbar-collapse" id="navbar-menu">
+          <ul class="navbar-nav">
+            <li class="nav-item"><a class="nav-link{% if path == '/' %} active{% endif %}" href="/" {% if path == '/' %}aria-current="page"{% endif %}>Home</a></li>
+            <li class="nav-item"><a class="nav-link{% if path == '/search' %} active{% endif %}" href="/search" {% if path == '/search' %}aria-current="page"{% endif %}>Search</a></li>
+            <li class="nav-item"><a class="nav-link{% if path == '/charts' or path.startswith('/playlists/') %} active{% endif %}" href="/charts" {% if path == '/charts' or path.startswith('/playlists/') %}aria-current="page"{% endif %}>Charts</a></li>
+            <li class="nav-item"><a class="nav-link{% if path == '/moods' or path.startswith('/moods/') %} active{% endif %}" href="/moods" {% if path == '/moods' or path.startswith('/moods/') %}aria-current="page"{% endif %}>Moods</a></li>
+            <li class="nav-item"><a class="nav-link{% if path == '/review' %} active{% endif %}" href="/review" {% if path == '/review' %}aria-current="page"{% endif %}>Review</a></li>
+            <li class="nav-item"><a class="nav-link{% if path == '/jobs' %} active{% endif %}" href="/jobs" {% if path == '/jobs' %}aria-current="page"{% endif %}>Jobs</a></li>
+            <li class="nav-item"><a class="nav-link{% if path == '/settings' %} active{% endif %}" href="/settings" {% if path == '/settings' %}aria-current="page"{% endif %}>Settings</a></li>
+          </ul>
+        </div>
+      </div>
+    </header>
+    {% endif %}
+    <div class="page-wrapper">
+      <div class="page-body">
+        <div class="container-xl">
+          {% block content %}{% endblock %}
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="/static/tabler.min.js"></script>
+  <script src="/static/keo.js" defer></script>
 </body>
 </html>
