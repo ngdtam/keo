@@ -25,6 +25,24 @@ function label(data) {
   return "Done";
 }
 
+const cover = document.getElementById("cover-size");
+if (cover) {
+  const legal = (value) => {
+    const size = Number(value);
+    return size >= 96 && size <= 320 && size % 8 === 0 ? size : 160;
+  };
+  const apply = (size) => {
+    document.documentElement.style.setProperty("--cover", `${size}px`);
+    cover.value = String(size);
+  };
+  apply(legal(localStorage.getItem("keo-cover")));
+  cover.addEventListener("input", () => {
+    const size = legal(cover.value);
+    apply(size);
+    localStorage.setItem("keo-cover", String(size));
+  });
+}
+
 const search = document.querySelector("input[list=suggestions]");
 if (search) {
   search.addEventListener("input", async () => {

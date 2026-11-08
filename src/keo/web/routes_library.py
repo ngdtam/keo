@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
+from keo.audio_info import load
 from keo.library import Job, inside_music, unique_title_file
 from keo.web.deps import TEMPLATES, get_services, require_page
 from keo.web.routes_queue import _detail, format_job_time
@@ -79,10 +81,13 @@ def _row(services, key: tuple[str, str], jobs: list[Job]) -> SimpleNamespace:
     cover = ""
     if kind == "spotify" and path and cover_bytes(path):
         cover = f"/library/spotify/{ident}/cover"
+    heard = load(path) if path is not None and path.is_file() else None
     return SimpleNamespace(
         href=href, color=color, label=label, artist=newest.artist, title=newest.title,
         path=str(path) if path else "", size=path.stat().st_size if path else None,
         can_delete=kind == "spotify", ident=ident, cover=cover,
+        quality=heard.card if heard and heard.card else "",
+        details=heard.rows if heard else (),
     )
 
 
@@ -181,11 +186,23 @@ def video_song(request: Request, video_id: str):
 
 
 @router.post("/library/spotify/{spotify_id}/delete", **PAGE)
-def delete_song(request: Request, spotify_id: str):
+def delete_song(request: Request, spotify_id: str, scope: Annotated[str, Form()] = ""):
     services = get_services(request)
     jobs = [job for job in services.library.list_jobs() if job.spotify_id == spotify_id]
     if not jobs:
         raise HTTPException(status_code=404, detail="Unknown song")
+    if scope == "library" and any(job.status in {"queued", "running"} for job in jobs):
+        row = _row(services, ("spotify", spotify_id), jobs)
+        return TEMPLATES.TemplateResponse(
+            request,
+            "song.html",
+            {
+                "song": row,
+                "jobs": _job_lines(services, jobs),
+                "notice": "This song is still downloading.",
+            },
+            status_code=409,
+        )
     music = services.music_dir
     raw = services.library.audio_path(spotify_id)
     path = Path(raw) if raw else None
@@ -199,4 +216,6 @@ def delete_song(request: Request, spotify_id: str):
         if lyrics.is_file() and music is not None and inside_music(music, lyrics):
             lyrics.unlink()
     services.library.forget_spotify(spotify_id)
+    if scope == "library":
+        services.library.drop_spotify_jobs(spotify_id)
     return RedirectResponse("/library", status_code=303)

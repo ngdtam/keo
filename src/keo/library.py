@@ -211,6 +211,10 @@ class Library:
         with self._lock, self._db:
             self._db.execute("DELETE FROM songs WHERE spotify_id = ?", (spotify_id,))
 
+    def drop_spotify_jobs(self, spotify_id: str) -> None:
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM jobs WHERE spotify_id = ?", (spotify_id,))
+
     def mark_owned(self, video_id: str, artist: str, title: str, spotify_id: str | None) -> None:
         with self._lock, self._db:
             self._db.execute(

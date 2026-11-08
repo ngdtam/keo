@@ -1,10 +1,16 @@
 {% extends "base.html" %}
 {% block title %}Library{% endblock %}
 {% block content %}
-<h2 class="page-title mb-3">Library</h2>
-<div class="row row-cards">
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h2 class="page-title mb-0">Library</h2>
+  <label class="d-flex align-items-center gap-2 mb-0">
+    Size
+    <input id="cover-size" type="range" min="96" max="320" step="8" value="160">
+  </label>
+</div>
+<div class="d-flex flex-wrap gap-3">
   {% for row in rows %}
-  <div class="col-6 col-sm-4 col-lg-3">
+  <div style="width: var(--cover, 160px)">
     <a href="{{ row.href }}" class="card card-link h-100">
       <div class="ratio ratio-1x1 bg-secondary-lt">
         {% if row.cover %}
@@ -14,6 +20,9 @@
       <div class="card-body p-2">
         <div class="fw-bold text-truncate">{{ row.title }}</div>
         <div class="text-secondary text-truncate">{{ row.artist }}</div>
+        {% if row.quality %}
+        <div class="text-secondary text-truncate">{{ row.quality }}</div>
+        {% endif %}
       </div>
       <div class="bg-{{ row.color }}" style="height: .4rem"></div>
     </a>
