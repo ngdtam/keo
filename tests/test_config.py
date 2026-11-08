@@ -34,7 +34,7 @@ def test_defaults_suit_a_regular_account(env):
     assert settings.spotdl.bitrate == "128k"
     assert settings.spotdl.cookie_file == ""
     assert settings.history_timezone == "Asia/Ho_Chi_Minh"
-    assert settings.history_hour == 23
+    assert settings.history_hour == 22
     assert settings.data_dir == Path(env["KEO_DATA_DIR"])
 
 
@@ -42,7 +42,7 @@ def test_example_file_matches_the_defaults(env):
     env["KEO_CONFIG"] = str(REPO / "keo.example.toml")
     settings = load_settings(env)
     assert settings.spotdl == SpotdlSettings()
-    assert (settings.history_timezone, settings.history_hour) == ("Asia/Ho_Chi_Minh", 23)
+    assert (settings.history_timezone, settings.history_hour) == ("Asia/Ho_Chi_Minh", 22)
 
 
 def test_premium_settings_load(env, tmp_path):
@@ -84,6 +84,20 @@ def test_oauth_file_needs_client_credentials(env):
     assert (settings.ytm_client_id, settings.ytm_client_secret) == ("client", "shh")
 
 
+def test_tz_overrides_the_file_and_rejects_an_unknown_zone(env):
+    write_config(env, 'history_timezone = "Europe/Paris"\n')
+    env["TZ"] = "Asia/Tokyo"
+    assert load_settings(env).history_timezone == "Asia/Tokyo"
+    env["TZ"] = "Mars/Base"
+    with pytest.raises(ConfigError, match="TZ"):
+        load_settings(env)
+
+
+def test_file_timezone_is_ignored(env):
+    write_config(env, 'history_timezone = "Mars/Base"\n')
+    assert load_settings(env).history_timezone == "Asia/Ho_Chi_Minh"
+
+
 @pytest.mark.parametrize(
     ("text", "setting"),
     [
@@ -94,7 +108,6 @@ def test_oauth_file_needs_client_credentials(env):
         ('bitrate = "999k"\n', "bitrate"),
         ('audio = ["napster"]\n', "audio"),
         ("history_hour = 24\n", "history_hour"),
-        ('history_timezone = "Mars/Base"\n', "history_timezone"),
         ('sponsor_block = "yes"\n', "sponsor_block"),
     ],
 )

@@ -1,6 +1,7 @@
 """Test doubles for YouTube Music and spotDL."""
 
 from keo.catalog import CatalogError
+from keo.config import SpotdlSettings
 from keo.records import MoodRef, PlaylistRef, SongRow
 from keo.spotdl_cmd import Candidate, DownloadResult, Lookup
 
@@ -78,6 +79,10 @@ class FakeSpotdl:
         self.download_error = None
         self.lookups = []
         self.downloads = []
+        self.settings = SpotdlSettings()
+
+    def use(self, settings):
+        self.settings = settings
 
     def lookup(self, query):
         self.lookups.append(query)

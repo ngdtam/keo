@@ -6,6 +6,7 @@ data
 music
 secrets
 docs
+sources
 tests
 ytmusicapi
 spotify-downloader

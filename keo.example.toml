@@ -42,4 +42,4 @@ client_secret = ""
 
 # Daily history check
 history_timezone = "Asia/Ho_Chi_Minh"
-history_hour = 23              # 23 means 23:00
+history_hour = 22              # 22 means 22:00

@@ -43,6 +43,12 @@ def build_app() -> FastAPI:
         library=library,
         worker=worker,
         spotdl=spotdl,
+        config_path=settings.config_path,
+        ytm_auth=settings.ytm_auth,
+        ytm_client_id=settings.ytm_client_id,
+        ytm_client_secret=settings.ytm_client_secret,
+        timezone=settings.history_timezone,
+        data_dir=settings.data_dir,
     )
 
     scheduler = Scheduler(

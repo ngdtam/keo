@@ -1,25 +1,32 @@
 {% extends "base.html" %}
+{% block title %}Review{% endblock %}
 {% block content %}
-<h1>Review</h1>
-<p>Songs you played 3 or more times today whose Spotify match was not close enough to download on their own.</p>
-<ul class="songs">
-{% for row in rows %}
-  <li>
-    <div class="song">
-      <strong>{{ row.heard_title }}</strong>
-      <span>{{ row.heard_artist }}</span>
-      {% if row.spotify_url %}
-      <small>Spotify match: {{ row.candidate_title }} — {{ row.candidate_artist }}</small>
-      {% else %}
-      <small>No Spotify match found.</small>
-      {% endif %}
-    </div>
-    <button type="button" data-post="/api/review/{{ row.video_id | urlencode }}/download">
-      {% if row.spotify_url %}Download{% else %}Look up again{% endif %}
-    </button>
-  </li>
-{% else %}
-  <li>Nothing to review.</li>
-{% endfor %}
-</ul>
+<h2 class="page-title mb-3">Review</h2>
+<p class="text-secondary">Songs you played 3 or more times today whose Spotify match was not close enough to download on their own.</p>
+<div class="card">
+  <ul class="list-group list-group-flush">
+  {% for row in rows %}
+    <li class="list-group-item">
+      <div class="row align-items-center">
+        <div class="col">
+          <div class="fw-bold">{{ row.heard_title }}</div>
+          <div>{{ row.heard_artist }}</div>
+          {% if row.spotify_url %}
+          <div class="text-secondary">Spotify match: {{ row.candidate_title }} — {{ row.candidate_artist }}</div>
+          {% else %}
+          <div class="text-secondary">No Spotify match found.</div>
+          {% endif %}
+        </div>
+        <div class="col-auto">
+          <button type="button" class="btn" data-post="/api/review/{{ row.video_id | urlencode }}/download">
+            {% if row.spotify_url %}Download{% else %}Look up again{% endif %}
+          </button>
+        </div>
+      </div>
+    </li>
+  {% else %}
+    <li class="list-group-item">Nothing to review.</li>
+  {% endfor %}
+  </ul>
+</div>
 {% endblock %}

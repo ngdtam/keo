@@ -43,7 +43,7 @@ def test_suggestions_api(client, auth):
 
 
 def test_search_page_lists_songs_with_a_download_button(logged_in):
-    response = logged_in.get("/", params={"q": "lac"})
+    response = logged_in.get("/search", params={"q": "lac"})
     assert response.status_code == 200
     assert "Lạc Trôi" in response.text
     assert "data-download" in response.text
@@ -75,6 +75,7 @@ def test_youtube_music_failure_is_502(client, auth, catalog):
 
 def test_youtube_music_failure_page_shows_the_reason(logged_in, catalog):
     catalog.fail = True
-    response = logged_in.get("/", params={"q": "lac"})
+    response = logged_in.get("/search", params={"q": "lac"})
     assert response.status_code == 502
     assert "offline" in response.text
+    assert "navbar-nav" in response.text

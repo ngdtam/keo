@@ -1,9 +1,20 @@
 {% extends "base.html" %}
+{% block title %}Sign in{% endblock %}
 {% block content %}
-<h1>Kéo</h1>
-<form method="post" action="/login">
-  <input type="password" name="token" placeholder="Token" autocomplete="current-password" required>
-  <button>Sign in</button>
-</form>
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<div class="row justify-content-center">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-body">
+        <h2 class="page-title mb-3">Kéo</h2>
+        <form method="post" action="/login">
+          <div class="mb-3">
+            <input class="form-control" type="password" name="token" placeholder="Token" autocomplete="current-password" required>
+          </div>
+          <button class="btn">Sign in</button>
+        </form>
+        {% if error %}<div class="alert mt-3 mb-0" role="alert">{{ error }}</div>{% endif %}
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}

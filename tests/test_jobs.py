@@ -9,6 +9,11 @@ def submit(worker, **kwargs):
     return worker.submit("vid1", "Sơn Tùng M-TP", "Lạc Trôi", **kwargs)
 
 
+def test_submit_records_mp3_as_not_premium(worker):
+    job = submit(worker)
+    assert (job.format, job.premium) == ("mp3", 0)
+
+
 def test_tap_creates_one_job_and_a_second_tap_reuses_it(worker, library):
     first = submit(worker)
     second = submit(worker)

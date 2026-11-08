@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<div class="row row-cards">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-body">
+        <div class="subheader">Review</div>
+        <div class="h1 mb-2">{{ review_count }} waiting</div>
+        <a href="/review">Review</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-body">
+        <div class="subheader">Jobs</div>
+        <div>{{ active_count }} queued or running</div>
+        <div class="mb-2">{{ failed_count }} failed</div>
+        <a href="/jobs">Jobs</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% if auth_error or gaps or warnings %}
+<div class="card mt-3">
+  <div class="card-body">
+    <div class="alert mb-0" role="alert">
+      {% if auth_error %}
+      <p class="mb-0">{{ auth_error }}</p>
+      {% elif gaps %}
+      <p class="mb-0">YouTube Music auth file is missing {{ gaps | join(", ") }}.</p>
+      {% endif %}
+      {% for warning in warnings %}
+      <p class="mb-0">{{ warning }}</p>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

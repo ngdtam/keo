@@ -1,9 +1,19 @@
 import json
 import subprocess
+import sys
 
 import pytest
 
-from keo.config import FORMATS, SpotdlSettings
+from keo.config import (
+    ALBUM_TYPES,
+    AUDIO_PROVIDERS,
+    BITRATES,
+    FORMATS,
+    LYRICS_PROVIDERS,
+    RESTRICT,
+    SpotdlSettings,
+    apply_choice,
+)
 from keo.spotdl_cmd import Paths, Spotdl, build_args, parse_save_output, tail
 
 URL = "https://open.spotify.com/track/abc123"
@@ -183,3 +193,84 @@ def test_download_timeout_is_not_finished(paths):
     result = Spotdl(SpotdlSettings(), paths, runner=runner(timeout=True)).download(URL, "abc123")
     assert not result.ok
     assert "timed out" in result.output
+
+
+def test_use_changes_the_next_download(paths):
+    run = runner()
+    spotdl = Spotdl(SpotdlSettings(), paths, runner=run)
+    spotdl.use(SpotdlSettings(format="ogg"))
+    spotdl.download(URL, "abc123")
+    assert values_after(run.calls[0][0], "--format") == ["ogg"]
+
+
+def _button_settings(base):
+    settings = [base]
+    for name, values in (
+        ("format", FORMATS),
+        ("bitrate", BITRATES),
+        ("album_type", ALBUM_TYPES),
+        ("restrict", RESTRICT),
+    ):
+        settings.extend(apply_choice(base, name, value) for value in values)
+    for provider in AUDIO_PROVIDERS:
+        if provider not in base.audio:
+            settings.append(apply_choice(base, "audio", provider))
+    for provider in LYRICS_PROVIDERS:
+        settings.append(apply_choice(base, "lyrics", provider))
+    for name in (
+        "sponsor_block",
+        "skip_album_art",
+        "only_verified_results",
+        "dont_filter_results",
+        "skip_explicit",
+        "preload",
+    ):
+        settings.append(apply_choice(base, name, "true"))
+        settings.append(apply_choice(base, name, "false"))
+    with_synced = apply_choice(base, "lyrics", "synced")
+    settings.append(apply_choice(with_synced, "generate_lrc", "true"))
+    return settings
+
+
+def _parse_spotdl(args):
+    from spotdl.utils.arguments import create_parser
+
+    sys.argv = ["spotdl", *args]
+    try:
+        return create_parser().parse_args(list(args))
+    except SystemExit as exc:
+        raise AssertionError("spotdl rejected: " + " ".join(args)) from exc
+
+
+def test_spotdl_accepts_every_settings_button(paths, tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    cookies = tmp_path / "cookies.txt"
+    cookies.write_text("cookies", encoding="utf-8")
+    base = SpotdlSettings(cookie_file=str(cookies))
+    for settings in _button_settings(base):
+        for operation in ("download", "save"):
+            args = build_args(settings, paths, operation, URL)
+            parsed = _parse_spotdl(args)
+            assert tuple(parsed.audio_providers) == settings.audio
+            assert tuple(parsed.lyrics_providers) == settings.lyrics
+            assert parsed.cookie_file == settings.cookie_file
+            if operation == "download":
+                assert parsed.format == settings.format
+                assert parsed.bitrate == settings.bitrate
+                assert parsed.album_type == (settings.album_type or None)
+                assert parsed.restrict == (settings.restrict or None)
+                assert parsed.sponsor_block is (True if settings.sponsor_block else None)
+                assert parsed.generate_lrc is (True if settings.generate_lrc else None)
+                assert parsed.skip_album_art is (True if settings.skip_album_art else None)
+                assert parsed.only_verified_results is (
+                    True if settings.only_verified_results else None
+                )
+                assert parsed.filter_results is (False if settings.dont_filter_results else None)
+                assert parsed.skip_explicit is (True if settings.skip_explicit else None)
+                assert "--preload" not in args
+            else:
+                assert parsed.preload is (True if settings.preload else None)
+                assert "--format" not in args
+                assert "--bitrate" not in args

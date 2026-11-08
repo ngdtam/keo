@@ -1,3 +1,4 @@
+from keo.library import Library
 from keo.records import HistoryItem
 
 URL = "https://open.spotify.com/track/sp1"
@@ -28,6 +29,34 @@ def test_mark_owned_clears_the_review_row(library):
     library.add_review("vid1", "A", "B", reason="no_metadata")
     library.mark_owned("vid1", "A", "B", "sp1")
     assert library.get_review("vid1") is None
+
+
+def test_enqueue_stores_the_pull_and_keeps_it_on_the_active_job(library):
+    first = library.enqueue("vid1", "A", "B", source="manual", format="opus", premium=1)
+    second = library.enqueue("vid1", "A", "B", source="manual", format="mp3", premium=0)
+    assert (first.format, first.premium) == ("opus", 1)
+    assert (second.format, second.premium) == ("opus", 1)
+
+
+def test_old_database_leaves_pull_facts_null(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "keo.db"
+    connection = sqlite3.connect(db)
+    connection.execute(
+        "CREATE TABLE jobs (id INTEGER PRIMARY KEY, video_id TEXT, artist TEXT, title TEXT,"
+        " spotify_url TEXT, spotify_id TEXT, status TEXT, source TEXT, error TEXT,"
+        " created_at TEXT, updated_at TEXT)"
+    )
+    connection.execute(
+        "INSERT INTO jobs (video_id, artist, title, status, source, created_at, updated_at)"
+        " VALUES ('vid1', 'A', 'Old', 'queued', 'manual', '2026-11-07T15:00:00+00:00',"
+        " '2026-11-07T15:00:00+00:00')"
+    )
+    connection.commit()
+    connection.close()
+    job = Library(db, tmp_path / "archive.txt").get_job(1)
+    assert (job.format, job.premium) == (None, None)
 
 
 def test_enqueue_reuses_the_active_job(library):

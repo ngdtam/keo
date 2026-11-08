@@ -7,6 +7,7 @@ exits on ConfigError, so every message names the setting to fix.
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, fields, replace
@@ -26,7 +27,7 @@ ALBUM_TYPES = ("", "single", "album", "compilation")
 RESTRICT = ("", "strict", "ascii", "none")
 
 DEFAULT_TIMEZONE = "Asia/Ho_Chi_Minh"
-DEFAULT_HOUR = 23
+DEFAULT_HOUR = 22
 
 
 class ConfigError(Exception):
@@ -73,6 +74,7 @@ class Settings:
     spotdl: SpotdlSettings
     history_timezone: str
     history_hour: int
+    config_path: Path
 
 
 _DEFAULT_SPOTDL = SpotdlSettings()
@@ -95,7 +97,8 @@ def load_settings(env: Mapping[str, str]) -> Settings:
             "KEO_YTM_AUTH is an OAuth file, so KEO_YTM_CLIENT_ID and "
             "KEO_YTM_CLIENT_SECRET are required"
         )
-    spotdl, timezone, hour = _load_file(Path(env.get("KEO_CONFIG", "/config/keo.toml")))
+    config_path = Path(env.get("KEO_CONFIG", "/config/keo.toml"))
+    spotdl, hour = _load_file(config_path)
     return Settings(
         token=token,
         music_dir=music_dir,
@@ -104,8 +107,9 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         ytm_client_id=client_id,
         ytm_client_secret=client_secret,
         spotdl=spotdl,
-        history_timezone=timezone,
+        history_timezone=_zone(env.get("TZ", "")),
         history_hour=hour,
+        config_path=config_path,
     )
 
 
@@ -124,7 +128,16 @@ def _is_oauth(path: Path) -> bool:
     return isinstance(data, dict) and "refresh_token" in data
 
 
-def _load_file(path: Path) -> tuple[SpotdlSettings, str, int]:
+def _zone(value: str) -> str:
+    name = value.strip() or DEFAULT_TIMEZONE
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ConfigError(f"TZ is not a known time zone: {name}") from exc
+    return name
+
+
+def _load_file(path: Path) -> tuple[SpotdlSettings, int]:
     data: dict[str, Any] = {}
     if path.is_file():
         try:
@@ -145,19 +158,10 @@ def _load_file(path: Path) -> tuple[SpotdlSettings, str, int]:
     )
     _check_spotdl(spotdl)
 
-    timezone = _coerce(
-        "history_timezone", data.get("history_timezone", DEFAULT_TIMEZONE), DEFAULT_TIMEZONE
-    )
-    try:
-        ZoneInfo(timezone)
-    except (ZoneInfoNotFoundError, ValueError) as exc:
-        raise ConfigError(
-            f"keo.toml: history_timezone is not a known time zone: {timezone}"
-        ) from exc
     hour = _coerce("history_hour", data.get("history_hour", DEFAULT_HOUR), DEFAULT_HOUR)
     if not 0 <= hour <= 23:
         raise ConfigError("keo.toml: history_hour must be between 0 and 23")
-    return spotdl, timezone, hour
+    return spotdl, hour
 
 
 def _coerce(name: str, value: Any, default: Any) -> Any:
@@ -205,3 +209,133 @@ def _some_of(name: str, values: tuple[str, ...], choices: tuple[str, ...]) -> No
     if not values or any(value not in choices for value in values):
         shown = ", ".join(repr(choice) for choice in choices)
         raise ConfigError(f"keo.toml: {name} must be a non-empty list from {shown}")
+
+
+_BROWSER_FIELDS = ("cookie", "x-goog-authuser", "authorization")
+_OAUTH_FIELDS = ("access_token", "refresh_token", "token_type")
+_ENUMS = {
+    "format": FORMATS,
+    "bitrate": BITRATES,
+    "album_type": ALBUM_TYPES,
+    "restrict": RESTRICT,
+}
+_TOGGLES = {"audio": AUDIO_PROVIDERS, "lyrics": LYRICS_PROVIDERS}
+_FLAGS = (
+    "sponsor_block",
+    "generate_lrc",
+    "skip_album_art",
+    "only_verified_results",
+    "dont_filter_results",
+    "skip_explicit",
+    "preload",
+)
+_PREMIUM = {"format": frozenset({"m4a", "opus"}), "bitrate": frozenset({"disable"})}
+BUTTONS = tuple(_ENUMS) + tuple(_TOGGLES) + _FLAGS
+
+
+def auth_gaps(path: Path, client_id: str = "", client_secret: str = "") -> tuple[str, ...]:
+    """Names of the auth fields that are missing. No network call."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ConfigError(f"KEO_YTM_AUTH could not be read: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ConfigError("KEO_YTM_AUTH must be a JSON object")
+    if "refresh_token" in data:
+        gaps = _blank(data, _OAUTH_FIELDS)
+        if not client_id.strip():
+            gaps.append("KEO_YTM_CLIENT_ID")
+        if not client_secret.strip():
+            gaps.append("KEO_YTM_CLIENT_SECRET")
+        return tuple(gaps)
+    headers = {str(key).lower(): value for key, value in data.items()}
+    return tuple(_blank(headers, _BROWSER_FIELDS))
+
+
+def cookie_ready(settings: SpotdlSettings) -> bool:
+    return bool(settings.cookie_file) and Path(settings.cookie_file).is_file()
+
+
+def is_premium(name: str, value: str) -> bool:
+    return name in _PREMIUM and value in _PREMIUM[name]
+
+
+def apply_choice(settings: SpotdlSettings, name: str, value: str) -> SpotdlSettings:
+    """Return settings with one button changed. Raise ConfigError and keep the old ones."""
+    if name not in BUTTONS:
+        raise ConfigError(f"keo.toml: {name} is not a Settings button")
+    if is_premium(name, value) and not cookie_ready(settings):
+        raise ConfigError(f"keo.toml: {name} {value} needs a cookie file that exists")
+    if name in _ENUMS:
+        _one_of(name, value, _ENUMS[name])
+        return replace(settings, **{name: value})
+    if name in _TOGGLES:
+        return replace(settings, **{name: _toggle(settings, name, value)})
+    if value not in ("true", "false"):
+        raise ConfigError(f"keo.toml: {name} must be true or false")
+    enabled = value == "true"
+    if name == "generate_lrc" and enabled and "synced" not in settings.lyrics:
+        raise ConfigError('keo.toml: generate_lrc needs "synced" in lyrics')
+    return replace(settings, **{name: enabled})
+
+
+def save_cookie_file(path: Path, settings: SpotdlSettings, cookie_path: Path) -> SpotdlSettings:
+    updated = replace(settings, cookie_file=str(cookie_path))
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    path.write_text(
+        _replace_assignment(text, "cookie_file", _render("cookie_file", updated.cookie_file)),
+        encoding="utf-8",
+    )
+    return updated
+
+
+def save_choice(path: Path, settings: SpotdlSettings, name: str, value: str) -> SpotdlSettings:
+    updated = apply_choice(settings, name, value)
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    path.write_text(_replace_assignment(text, name, _render(name, getattr(updated, name))), encoding="utf-8")
+    return updated
+
+
+def _blank(data: Mapping[str, Any], names: tuple[str, ...]) -> list[str]:
+    return [
+        name for name in names if not (isinstance(data.get(name), str) and data[name].strip())
+    ]
+
+
+def _toggle(settings: SpotdlSettings, name: str, value: str) -> tuple[str, ...]:
+    choices = _TOGGLES[name]
+    if value not in choices:
+        shown = ", ".join(repr(choice) for choice in choices)
+        raise ConfigError(f"keo.toml: {name} must be one of {shown}")
+    current = getattr(settings, name)
+    if value in current:
+        kept = tuple(item for item in current if item != value)
+        if not kept:
+            raise ConfigError(f"keo.toml: {name} must keep one source")
+        if name == "lyrics" and settings.generate_lrc and "synced" not in kept:
+            raise ConfigError('keo.toml: generate_lrc needs "synced" in lyrics')
+        return kept
+    return current + (value,)
+
+
+def _render(name: str, value: Any) -> str:
+    if isinstance(value, bool):
+        return f"{name} = {'true' if value else 'false'}"
+    if isinstance(value, tuple):
+        items = ", ".join(json.dumps(item) for item in value)
+        return f"{name} = [{items}]"
+    return f"{name} = {json.dumps(value)}"
+
+
+def _replace_assignment(text: str, name: str, rendered: str) -> str:
+    # shortcut: a trailing comment on the edited line is dropped, upgrade when a line has one.
+    pattern = re.compile(rf"^[ \t]*{re.escape(name)}[ \t]*=")
+    lines = text.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if pattern.match(line):
+            newline = "\r\n" if line.endswith("\r\n") else "\n"
+            lines[index] = rendered + newline
+            return "".join(lines)
+    if text and not text.endswith(("\n", "\r\n")):
+        text += "\n"
+    return text + rendered + "\n"
