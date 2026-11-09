@@ -262,3 +262,51 @@ def test_download_stores_nothing_when_no_file_appears(library, spotdl, tmp_path)
     worker.submit("vid1", "A", "Song", spotify_url=URL, spotify_id="sp1")
     assert worker.run_once()
     assert library.audio_path("sp1") is None
+
+
+def test_red_spotify_card_has_a_download_button(logged_in, library):
+    job = library.enqueue(
+        "vid1", "A", "Song", source="manual", spotify_id="sp1", spotify_url=URL,
+    )
+    library.finish(job.id, ok=False, error="boom")
+    text = logged_in.get("/library").text
+    assert 'class="bg-red" data-status' in text
+    assert 'data-library-download="/api/library/spotify/sp1/download"' in text
+    assert ">Download</button>" in text
+    chunk = text.split('href="/library/spotify/sp1"', 1)[1]
+    assert chunk.index("</a>") < chunk.index("data-library-download")
+
+
+def test_red_video_card_has_a_download_button(logged_in, library):
+    job = library.enqueue("vid1", "Đen", "No Match", source="manual")
+    library.finish(job.id, ok=False, error="boom")
+    text = logged_in.get("/library").text
+    assert 'data-library-download="/api/library/video/vid1/download"' in text
+    chunk = text.split('href="/library/video/vid1"', 1)[1]
+    assert chunk.index("</a>") < chunk.index("data-library-download")
+
+
+def test_green_card_has_no_download_button(logged_in, library, tmp_path):
+    library.mark_owned("vid1", "A", "Song", "sp1")
+    job = library.enqueue(
+        "vid1", "A", "Song", source="manual", spotify_id="sp1", spotify_url=URL,
+    )
+    library.finish(job.id, ok=True)
+    audio = tmp_path / "music" / "A - Song.opus"
+    audio.write_bytes(b"song")
+    library.set_audio_path("sp1", str(audio))
+    text = logged_in.get("/library").text
+    assert 'class="bg-green" data-status' in text
+    assert "data-library-download" not in text
+    assert ">Download</button>" not in text
+
+
+def test_yellow_card_has_no_download_button(logged_in, library, tmp_path):
+    library.mark_owned("vid1", "A", "Song", "sp1")
+    library.enqueue("vid1", "A", "Song", source="manual", spotify_id="sp1", spotify_url=URL)
+    audio = tmp_path / "music" / "A - Song.opus"
+    audio.write_bytes(b"song")
+    library.set_audio_path("sp1", str(audio))
+    text = logged_in.get("/library").text
+    assert 'class="bg-yellow" data-status' in text
+    assert "data-library-download" not in text
