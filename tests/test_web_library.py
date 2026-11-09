@@ -468,3 +468,8 @@ def test_song_page_shows_the_cover_and_no_download(logged_in, library, tmp_path,
     assert "Remove file" in text
     assert "Remove from library" in text
     assert "data-library-download" not in text
+
+
+def test_library_nav_item_is_active(logged_in):
+    text = logged_in.get("/library").text
+    assert 'class="nav-link active" href="/library"' in text
