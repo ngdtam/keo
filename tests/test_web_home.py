@@ -25,7 +25,17 @@ def test_home_and_search_without_a_session_redirect_to_login(client):
 def test_login_has_no_navbar(client):
     text = client.get("/login").text
     assert "navbar-nav" not in text
+    assert "navbar-vertical" not in text
     assert CREDITS in text
+
+
+def test_signed_in_page_has_a_vertical_nav(logged_in):
+    text = logged_in.get("/").text
+    assert "navbar-vertical" in text
+    assert "navbar-expand-lg" in text
+    assert 'data-bs-theme="dark"' in text
+    assert 'data-bs-target="#sidebar-menu"' in text
+    assert "navbar-nav" in text
 
 
 def test_home_shows_the_credits(logged_in):

@@ -10,14 +10,14 @@
   {% set path = request.url.path %}
   <div class="page">
     {% if path != '/login' %}
-    <header class="navbar navbar-expand-md d-print-none">
-      <div class="container-xl">
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar-menu" aria-controls="navbar-menu" aria-expanded="false" aria-label="Open menu">
+    <aside class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
+      <div class="container-fluid">
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#sidebar-menu" aria-controls="sidebar-menu" aria-expanded="false" aria-label="Open menu">
           <span class="navbar-toggler-icon"></span>
         </button>
         <a href="/" class="navbar-brand">Kéo</a>
-        <div class="collapse navbar-collapse" id="navbar-menu">
-          <ul class="navbar-nav">
+        <div class="collapse navbar-collapse" id="sidebar-menu">
+          <ul class="navbar-nav pt-lg-3">
             <li class="nav-item"><a class="nav-link{% if path == '/' %} active{% endif %}" href="/" {% if path == '/' %}aria-current="page"{% endif %}>Home</a></li>
             <li class="nav-item"><a class="nav-link{% if path.startswith('/library') %} active{% endif %}" href="/library" {% if path.startswith('/library') %}aria-current="page"{% endif %}>Library</a></li>
             <li class="nav-item"><a class="nav-link{% if path == '/search' %} active{% endif %}" href="/search" {% if path == '/search' %}aria-current="page"{% endif %}>Search</a></li>
@@ -28,7 +28,7 @@
           </ul>
         </div>
       </div>
-    </header>
+    </aside>
     {% endif %}
     <div class="page-wrapper">
       <div class="page-body">

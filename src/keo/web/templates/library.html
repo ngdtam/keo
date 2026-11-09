@@ -10,8 +10,8 @@
 </div>
 <div class="d-flex flex-wrap gap-3">
   {% for row in rows %}
-  <div style="width: var(--cover, 160px)">
-    <a href="{{ row.href }}" class="card card-link h-100">
+  <div class="card" style="width: var(--cover, 160px)">
+    <a href="{{ row.href }}" class="card-link">
       <div class="ratio ratio-1x1 bg-secondary-lt">
         {% if row.cover %}
         <img src="{{ row.cover }}" alt="" class="object-fit-cover">
@@ -24,8 +24,11 @@
         <div class="text-secondary text-truncate">{{ row.quality }}</div>
         {% endif %}
       </div>
-      <div class="bg-{{ row.color }}" style="height: .4rem"></div>
     </a>
+    {% if row.color == "red" %}
+    <button type="button" class="btn w-100" data-library-download="/api{{ row.href }}/download">Download</button>
+    {% endif %}
+    <div class="bg-{{ row.color }}" data-status style="height: .4rem"></div>
   </div>
   {% else %}
   <div class="col-12">No songs.</div>

@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     spotify_url TEXT,
     spotify_id TEXT,
     status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed')),
-    source TEXT NOT NULL CHECK (source IN ('manual', 'history', 'review')),
+    source TEXT NOT NULL CHECK (source IN ('manual', 'history', 'review', 'library')),
     error TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -159,6 +159,54 @@ class Library:
                 self._db.execute("ALTER TABLE jobs ADD COLUMN premium INTEGER")
             if "audio_path" not in song_columns:
                 self._db.execute("ALTER TABLE songs ADD COLUMN audio_path TEXT")
+        self._accept_library_source()
+
+    def _accept_library_source(self) -> None:
+        # SQLite cannot change a CHECK. Rebuild jobs so source may be 'library'.
+        row = self._db.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'jobs'"
+        ).fetchone()
+        if row is None or "'library'" in (row[0] or ""):
+            return
+        with self._db:
+            self._db.execute("DROP TABLE IF EXISTS jobs_next")
+            self._db.execute(
+                """
+                CREATE TABLE jobs_next (
+                    id INTEGER PRIMARY KEY,
+                    video_id TEXT NOT NULL,
+                    artist TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    spotify_url TEXT,
+                    spotify_id TEXT,
+                    status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed')),
+                    source TEXT NOT NULL CHECK (source IN ('manual', 'history', 'review', 'library')),
+                    error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    format TEXT,
+                    premium INTEGER
+                )
+                """
+            )
+            self._db.execute(
+                """
+                INSERT INTO jobs_next (
+                    id, video_id, artist, title, spotify_url, spotify_id, status, source,
+                    error, created_at, updated_at, format, premium
+                )
+                SELECT
+                    id, video_id, artist, title, spotify_url, spotify_id, status, source,
+                    error, created_at, updated_at, format, premium
+                FROM jobs
+                """
+            )
+            self._db.execute("DROP TABLE jobs")
+            self._db.execute("ALTER TABLE jobs_next RENAME TO jobs")
+            self._db.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS jobs_one_active"
+                " ON jobs (video_id) WHERE status IN ('queued', 'running')"
+            )
 
     # Owned songs
 
@@ -210,6 +258,10 @@ class Library:
         drop_track(self._archive_path, spotify_id)
         with self._lock, self._db:
             self._db.execute("DELETE FROM songs WHERE spotify_id = ?", (spotify_id,))
+
+    def forget_video(self, video_id: str) -> None:
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM songs WHERE video_id = ?", (video_id,))
 
     def drop_spotify_jobs(self, spotify_id: str) -> None:
         with self._lock, self._db:

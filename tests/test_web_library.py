@@ -1,8 +1,20 @@
+from pathlib import Path
+
 from keo.audio_info import AudioView
 from keo.spotdl_cmd import DownloadResult
 from keo.jobs import Worker
 
 URL = "https://open.spotify.com/track/sp1"
+
+
+def test_library_download_script_updates_the_card():
+    script = (Path(__file__).parents[1] / "src" / "keo" / "web" / "static" / "keo.js").read_text(
+        encoding="utf-8",
+    )
+    assert "button[data-library-download]" in script
+    assert "button[data-download], button[data-post]" in script
+    assert 'button.textContent = "Queued"' in script
+    assert 'classList.add("bg-yellow")' in script
 
 
 def test_two_jobs_are_one_library_song(logged_in, library):
@@ -262,3 +274,202 @@ def test_download_stores_nothing_when_no_file_appears(library, spotdl, tmp_path)
     worker.submit("vid1", "A", "Song", spotify_url=URL, spotify_id="sp1")
     assert worker.run_once()
     assert library.audio_path("sp1") is None
+
+
+def test_red_spotify_card_has_a_download_button(logged_in, library):
+    job = library.enqueue(
+        "vid1", "A", "Song", source="manual", spotify_id="sp1", spotify_url=URL,
+    )
+    library.finish(job.id, ok=False, error="boom")
+    text = logged_in.get("/library").text
+    assert 'class="bg-red" data-status' in text
+    assert 'data-library-download="/api/library/spotify/sp1/download"' in text
+    assert ">Download</button>" in text
+    chunk = text.split('href="/library/spotify/sp1"', 1)[1]
+    assert chunk.index("</a>") < chunk.index("data-library-download")
+
+
+def test_red_video_card_has_a_download_button(logged_in, library):
+    job = library.enqueue("vid1", "Đen", "No Match", source="manual")
+    library.finish(job.id, ok=False, error="boom")
+    text = logged_in.get("/library").text
+    assert 'data-library-download="/api/library/video/vid1/download"' in text
+    chunk = text.split('href="/library/video/vid1"', 1)[1]
+    assert chunk.index("</a>") < chunk.index("data-library-download")
+
+
+def test_green_card_has_no_download_button(logged_in, library, tmp_path):
+    library.mark_owned("vid1", "A", "Song", "sp1")
+    job = library.enqueue(
+        "vid1", "A", "Song", source="manual", spotify_id="sp1", spotify_url=URL,
+    )
+    library.finish(job.id, ok=True)
+    audio = tmp_path / "music" / "A - Song.opus"
+    audio.write_bytes(b"song")
+    library.set_audio_path("sp1", str(audio))
+    text = logged_in.get("/library").text
+    assert 'class="bg-green" data-status' in text
+    assert "data-library-download" not in text
+    assert ">Download</button>" not in text
+
+
+def test_yellow_card_has_no_download_button(logged_in, library, tmp_path):
+    library.mark_owned("vid1", "A", "Song", "sp1")
+    library.enqueue("vid1", "A", "Song", source="manual", spotify_id="sp1", spotify_url=URL)
+    audio = tmp_path / "music" / "A - Song.opus"
+    audio.write_bytes(b"song")
+    library.set_audio_path("sp1", str(audio))
+    text = logged_in.get("/library").text
+    assert 'class="bg-yellow" data-status' in text
+    assert "data-library-download" not in text
+
+
+def test_download_retries_a_failed_job_and_clears_the_lock(client, auth, library):
+    library.mark_owned("vid1", "A", "Song", "sp1")
+    job = library.enqueue(
+        "vid1", "A", "Song", source="manual", spotify_id="sp1", spotify_url=URL,
+    )
+    library.finish(job.id, ok=False, error="boom")
+    library._archive_path.write_text(URL + "\n", encoding="utf-8")
+    response = client.post("/api/library/spotify/sp1/download", headers=auth)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["job"]["id"] == job.id
+    assert body["job"]["status"] == "queued"
+    assert len(library.list_jobs()) == 1
+    assert library.has_spotify("sp1") is False
+    assert library.is_owned_spotify("sp1") is False
+
+
+def test_download_of_a_queued_song_returns_that_job(client, auth, library):
+    library.mark_owned("vid1", "A", "Song", "sp1")
+    job = library.enqueue(
+        "vid1", "A", "Song", source="manual", spotify_id="sp1", spotify_url=URL,
+    )
+    library._archive_path.write_text(URL + "\n", encoding="utf-8")
+    response = client.post("/api/library/spotify/sp1/download", headers=auth)
+    assert response.status_code == 200
+    assert response.json()["job"]["id"] == job.id
+    assert len(library.list_jobs()) == 1
+    assert library.has_spotify("sp1") is True
+    assert library.is_owned_spotify("sp1") is True
+
+
+def test_download_of_a_song_on_disk_is_409(client, auth, library, tmp_path):
+    library.mark_owned("vid1", "A", "Song", "sp1")
+    job = library.enqueue(
+        "vid1", "A", "Song", source="manual", spotify_id="sp1", spotify_url=URL,
+    )
+    library.finish(job.id, ok=True)
+    audio = tmp_path / "music" / "A - Song.opus"
+    audio.write_bytes(b"song")
+    library.set_audio_path("sp1", str(audio))
+    response = client.post("/api/library/spotify/sp1/download", headers=auth)
+    assert response.status_code == 409
+    assert response.json()["detail"] == "The file is already on disk."
+    assert len(library.list_jobs()) == 1
+    assert library.get_job(job.id).status == "succeeded"
+
+
+def test_download_queues_a_succeeded_song_whose_file_is_gone(client, auth, library):
+    library.mark_owned("vid1", "A", "Song", "sp1")
+    job = library.enqueue(
+        "vid1", "A", "Song", source="manual", spotify_id="sp1", spotify_url=URL,
+    )
+    library.finish(job.id, ok=True)
+    library._archive_path.write_text(URL + "\n", encoding="utf-8")
+    response = client.post("/api/library/spotify/sp1/download", headers=auth)
+    assert response.status_code == 200
+    body = response.json()["job"]
+    assert body["id"] != job.id
+    assert body["status"] == "queued"
+    assert body["video_id"] == "vid1"
+    assert body["spotify_id"] == "sp1"
+    assert body["source"] == "library"
+    assert library.has_spotify("sp1") is False
+    assert library.is_owned_spotify("sp1") is False
+
+
+def test_download_refuses_when_another_song_owns_the_title(client, auth, library):
+    library.mark_owned("vid-other", "A", "Song", "sp-other")
+    job = library.enqueue(
+        "vid1", "A", "Song", source="manual", spotify_id="sp1", spotify_url=URL,
+    )
+    library.finish(job.id, ok=True)
+    response = client.post("/api/library/spotify/sp1/download", headers=auth)
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Already in the library."
+    assert library.get_job(job.id).status == "succeeded"
+    assert len(library.list_jobs()) == 1
+
+
+def test_unknown_library_song_is_404(client, auth):
+    response = client.post("/api/library/spotify/missing/download", headers=auth)
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Unknown song"
+
+
+def test_video_download_retries_and_drops_the_songs_row(client, auth, library):
+    library.mark_owned("vid1", "Đen", "No Match", None)
+    job = library.enqueue("vid1", "Đen", "No Match", source="manual")
+    library.finish(job.id, ok=False, error="boom")
+    response = client.post("/api/library/video/vid1/download", headers=auth)
+    assert response.status_code == 200
+    assert response.json()["job"]["id"] == job.id
+    assert response.json()["job"]["status"] == "queued"
+    assert library.is_owned("vid1", "Đen", "No Match") is False
+
+
+def test_old_jobs_table_can_queue_a_library_download(tmp_path):
+    import sqlite3
+
+    from keo.library import Library
+
+    db = tmp_path / "keo.db"
+    connection = sqlite3.connect(db)
+    connection.execute(
+        "CREATE TABLE jobs ("
+        " id INTEGER PRIMARY KEY, video_id TEXT NOT NULL, artist TEXT NOT NULL,"
+        " title TEXT NOT NULL, spotify_url TEXT, spotify_id TEXT,"
+        " status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed')),"
+        " source TEXT NOT NULL CHECK (source IN ('manual', 'history', 'review')),"
+        " error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO jobs (video_id, artist, title, status, source, created_at, updated_at)"
+        " VALUES ('vid-old', 'A', 'Kept', 'succeeded', 'manual', 't', 't')"
+    )
+    connection.commit()
+    connection.close()
+    library = Library(db, tmp_path / "archive.txt")
+    job = library.enqueue(
+        "vid1", "A", "Song", source="library", spotify_url=URL, spotify_id="sp1",
+    )
+    assert job.source == "library"
+    kept = library.get_job(1)
+    assert (kept.title, kept.status, kept.source) == ("Kept", "succeeded", "manual")
+
+
+def test_song_page_shows_the_cover_and_no_download(logged_in, library, tmp_path, monkeypatch):
+    library.mark_owned("vid1", "A", "Song", "sp1")
+    job = library.enqueue(
+        "vid1", "A", "Song", source="manual", spotify_id="sp1", spotify_url=URL,
+    )
+    library.finish(job.id, ok=True)
+    audio = tmp_path / "music" / "A - Song.opus"
+    audio.write_bytes(b"song")
+    library.set_audio_path("sp1", str(audio))
+    monkeypatch.setattr(
+        "keo.web.routes_library.cover_bytes", lambda path: (b"img", "image/jpeg"),
+    )
+    text = logged_in.get("/library/spotify/sp1").text
+    assert 'src="/library/spotify/sp1/cover"' in text
+    assert 'style="width: 160px; height: 160px"' in text
+    assert "Remove file" in text
+    assert "Remove from library" in text
+    assert "data-library-download" not in text
+
+
+def test_library_nav_item_is_active(logged_in):
+    text = logged_in.get("/library").text
+    assert 'class="nav-link active" href="/library"' in text
