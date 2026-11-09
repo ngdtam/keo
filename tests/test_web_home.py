@@ -7,6 +7,13 @@ from tests.fakes import TOKEN
 COMPLETE = '{"cookie": "SID=x", "x-goog-authuser": "0", "authorization": "SAPISIDHASH present"}'
 GAP = '{"Cookie": "SID=x", "Authorization": "SAPISIDHASH present"}'
 
+CREDITS = (
+    'Powered by <a href="https://github.com/sigma67/ytmusicapi">ytmusicapi</a>, '
+    '<a href="https://github.com/spotDL/spotify-downloader">spotDL</a>, '
+    '<a href="https://github.com/MediaArea/MediaInfoLib">MediaInfo</a>, '
+    'and <a href="https://github.com/tabler/tabler">Tabler</a>'
+)
+
 
 def test_home_and_search_without_a_session_redirect_to_login(client):
     for path in ("/", "/search"):
@@ -16,7 +23,13 @@ def test_home_and_search_without_a_session_redirect_to_login(client):
 
 
 def test_login_has_no_navbar(client):
-    assert "navbar-nav" not in client.get("/login").text
+    text = client.get("/login").text
+    assert "navbar-nav" not in text
+    assert CREDITS in text
+
+
+def test_home_shows_the_credits(logged_in):
+    assert CREDITS in logged_in.get("/").text
 
 
 def test_blank_query_stays_on_the_dashboard(logged_in):
