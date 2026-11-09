@@ -448,3 +448,23 @@ def test_old_jobs_table_can_queue_a_library_download(tmp_path):
     assert job.source == "library"
     kept = library.get_job(1)
     assert (kept.title, kept.status, kept.source) == ("Kept", "succeeded", "manual")
+
+
+def test_song_page_shows_the_cover_and_no_download(logged_in, library, tmp_path, monkeypatch):
+    library.mark_owned("vid1", "A", "Song", "sp1")
+    job = library.enqueue(
+        "vid1", "A", "Song", source="manual", spotify_id="sp1", spotify_url=URL,
+    )
+    library.finish(job.id, ok=True)
+    audio = tmp_path / "music" / "A - Song.opus"
+    audio.write_bytes(b"song")
+    library.set_audio_path("sp1", str(audio))
+    monkeypatch.setattr(
+        "keo.web.routes_library.cover_bytes", lambda path: (b"img", "image/jpeg"),
+    )
+    text = logged_in.get("/library/spotify/sp1").text
+    assert 'src="/library/spotify/sp1/cover"' in text
+    assert 'style="width: 160px; height: 160px"' in text
+    assert "Remove file" in text
+    assert "Remove from library" in text
+    assert "data-library-download" not in text
