@@ -1,8 +1,20 @@
+from pathlib import Path
+
 from keo.audio_info import AudioView
 from keo.spotdl_cmd import DownloadResult
 from keo.jobs import Worker
 
 URL = "https://open.spotify.com/track/sp1"
+
+
+def test_library_download_script_updates_the_card():
+    script = (Path(__file__).parents[1] / "src" / "keo" / "web" / "static" / "keo.js").read_text(
+        encoding="utf-8",
+    )
+    assert "button[data-library-download]" in script
+    assert "button[data-download], button[data-post]" in script
+    assert 'button.textContent = "Queued"' in script
+    assert 'classList.add("bg-yellow")' in script
 
 
 def test_two_jobs_are_one_library_song(logged_in, library):
