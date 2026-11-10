@@ -21,8 +21,8 @@ def pull(catalog, library, worker, spotdl, now=NIGHT):
     )
 
 
-def test_close_match_played_three_times_is_queued(catalog, library, worker, spotdl):
-    catalog.history_items = plays()
+def test_close_match_played_once_is_queued(catalog, library, worker, spotdl):
+    catalog.history_items = plays(count=1)
     spotdl.candidates[QUERY] = candidate(name="Lạc Trôi (feat. Triple D)", artist="SƠN TÙNG M-TP")
     pull(catalog, library, worker, spotdl)
     job = library.active_job("vid1")
@@ -30,16 +30,15 @@ def test_close_match_played_three_times_is_queued(catalog, library, worker, spot
     assert library.get_review("vid1") is None
 
 
-def test_two_plays_are_logged_but_not_downloaded(catalog, library, worker, spotdl):
-    catalog.history_items = plays(count=2)
-    pull_id = pull(catalog, library, worker, spotdl)
-    assert spotdl.lookups == []
-    assert library.active_job("vid1") is None
-    assert [count.plays for count in library.count_today(pull_id)] == [2]
+def test_single_play_today_qualifies_for_lookup(catalog, library, worker, spotdl):
+    catalog.history_items = plays(count=1)
+    spotdl.candidates[QUERY] = candidate(name="Lạc Trôi (feat. Triple D)", artist="SƠN TÙNG M-TP")
+    pull(catalog, library, worker, spotdl)
+    assert library.active_job("vid1") is not None
 
 
 def test_plays_from_other_days_do_not_count(catalog, library, worker, spotdl):
-    catalog.history_items = plays(count=2) + plays(count=5, label="Yesterday")
+    catalog.history_items = plays(count=5, label="Yesterday")
     pull(catalog, library, worker, spotdl)
     assert spotdl.lookups == []
 

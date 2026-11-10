@@ -1,7 +1,7 @@
 """The daily YouTube Music history check.
 
-A song played 3 or more times today downloads on its own only when the Spotify
-match is close. Anything else waits on the review list for a tap.
+A song played today downloads on its own only when the Spotify match is close.
+Anything else waits on the review list for a tap.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from keo.spotdl_cmd import Spotdl
 
 log = logging.getLogger(__name__)
 
-PLAYS_TO_QUALIFY = 3
+PLAYS_TO_QUALIFY = 1
 CHECK_EVERY_SECONDS = 60
 
 
