@@ -25,3 +25,4 @@ def test_build_app_wires_the_services(monkeypatch, tmp_path):
     app = main.build_app()
     assert app.state.services.token == "secret"
     assert (tmp_path / "data" / "keo.db").exists()
+    assert app.state.services.cookies is app.state.services.worker.cookies

@@ -11,11 +11,12 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from keo.audio_info import load
 from keo.library import Job, inside_music, unique_title_file
-from keo.web.deps import TEMPLATES, get_services, require_page
-from keo.web.routes_queue import _detail, format_job_time
+from keo.web.deps import TEMPLATES, get_services, require_api, require_download, require_page
+from keo.web.routes_queue import _detail, format_job_time, queued
 
 router = APIRouter()
 PAGE = {"response_class": HTMLResponse, "dependencies": [Depends(require_page)]}
+API = {"dependencies": [Depends(require_api)]}
 
 
 def _live(jobs: list[Job]) -> str | None:
@@ -219,3 +220,47 @@ def delete_song(request: Request, spotify_id: str, scope: Annotated[str, Form()]
     if scope == "library":
         services.library.drop_spotify_jobs(spotify_id)
     return RedirectResponse("/library", status_code=303)
+
+
+def _redownload(services, kind: str, ident: str, jobs: list[Job]):
+    if not jobs:
+        raise HTTPException(status_code=404, detail="Unknown song")
+    live = next((job for job in jobs if job.status in {"queued", "running"}), None)
+    if live is not None:
+        return queued(live)
+    path = _known_file(services, ident, jobs) if kind == "spotify" else None
+    if path is not None:
+        raise HTTPException(status_code=409, detail="The file is already on disk.")
+    require_download(services)
+    if kind == "spotify":
+        services.library.forget_spotify(ident)
+    else:
+        services.library.forget_video(ident)
+    failed = next((job for job in jobs if job.status == "failed"), None)
+    if failed is not None:
+        return queued(services.worker.retry(failed.id))
+    newest = jobs[0]
+    job = services.worker.submit(
+        newest.video_id, newest.artist, newest.title,
+        source="library", spotify_url=newest.spotify_url, spotify_id=newest.spotify_id,
+    )
+    if job is None:
+        raise HTTPException(status_code=409, detail="Already in the library.")
+    return queued(job)
+
+
+@router.post("/api/library/spotify/{spotify_id}/download", **API)
+def download_spotify(request: Request, spotify_id: str):
+    services = get_services(request)
+    jobs = [job for job in services.library.list_jobs() if job.spotify_id == spotify_id]
+    return _redownload(services, "spotify", spotify_id, jobs)
+
+
+@router.post("/api/library/video/{video_id}/download", **API)
+def download_video(request: Request, video_id: str):
+    services = get_services(request)
+    jobs = [
+        job for job in services.library.list_jobs()
+        if job.spotify_id is None and job.video_id == video_id
+    ]
+    return _redownload(services, "video", video_id, jobs)

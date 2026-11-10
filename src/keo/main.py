@@ -14,6 +14,7 @@ from fastapi import FastAPI
 
 from keo.catalog import Catalog, open_ytmusic
 from keo.config import ConfigError, load_settings
+from keo.cookies import CookieGate
 from keo.history import Scheduler
 from keo.jobs import Worker
 from keo.library import Library
@@ -32,7 +33,8 @@ def build_app() -> FastAPI:
     library = Library(settings.data_dir / "keo.db", paths.archive)
     library.requeue_running()
     spotdl = Spotdl(settings.spotdl, paths)
-    worker = Worker(library, spotdl, settings.music_dir)
+    cookies = CookieGate()
+    worker = Worker(library, spotdl, settings.music_dir, cookies=cookies)
     try:
         ytm = open_ytmusic(settings.ytm_auth, settings.ytm_client_id, settings.ytm_client_secret)
     except Exception as exc:
@@ -43,6 +45,7 @@ def build_app() -> FastAPI:
         library=library,
         worker=worker,
         spotdl=spotdl,
+        cookies=cookies,
         config_path=settings.config_path,
         ytm_auth=settings.ytm_auth,
         ytm_client_id=settings.ytm_client_id,
@@ -57,6 +60,7 @@ def build_app() -> FastAPI:
         library=library,
         worker=worker,
         spotdl=spotdl,
+        cookies=cookies,
         timezone=settings.history_timezone,
         hour=settings.history_hour,
     )

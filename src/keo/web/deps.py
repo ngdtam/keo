@@ -12,6 +12,7 @@ from fastapi import HTTPException, Request
 from fastapi.templating import Jinja2Templates
 
 from keo.catalog import Catalog
+from keo.cookies import CookieGate
 from keo.jobs import Worker
 from keo.library import Library
 from keo.records import SongRow
@@ -32,6 +33,7 @@ class Services:
     library: Library
     worker: Worker
     spotdl: Spotdl
+    cookies: CookieGate
     run_later: Callable[[Callable[[], object]], None] = _start_thread
     config_path: Path | None = None
     ytm_auth: Path | None = None
@@ -58,6 +60,12 @@ def require_api(request: Request) -> None:
 def require_page(request: Request) -> None:
     if not is_authorized(request, get_services(request).token):
         raise LoginRequired()
+
+
+def require_download(services: Services) -> None:
+    reason = services.cookies.allow(services.spotdl.settings)
+    if reason is not None:
+        raise HTTPException(status_code=409, detail=reason)
 
 
 def song_json(song: SongRow) -> dict[str, Any]:

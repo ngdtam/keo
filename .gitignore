@@ -12,3 +12,4 @@ music/
 secrets/
 .DS_Store
 docs/superpowers/
+.worktrees/

@@ -7,6 +7,7 @@ import threading
 from pathlib import Path
 
 from keo.config import cookie_ready
+from keo.cookies import CookieGate, settings_are_premium
 from keo.library import Job, Library, list_audio
 from keo.spotdl_cmd import Spotdl
 
@@ -15,10 +16,18 @@ IDLE_WAIT_SECONDS = 5
 
 
 class Worker:
-    def __init__(self, library: Library, spotdl: Spotdl, music_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        library: Library,
+        spotdl: Spotdl,
+        music_dir: Path | None = None,
+        *,
+        cookies: CookieGate,
+    ) -> None:
         self._library = library
         self._spotdl = spotdl
         self._music = music_dir
+        self.cookies = cookies
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -37,7 +46,7 @@ class Worker:
         if self._library.is_owned(video_id, artist, title):
             return None
         settings = self._spotdl.settings
-        premium = int(cookie_ready(settings) and settings.format in {"opus", "m4a"})
+        premium = int(settings_are_premium(settings) and cookie_ready(settings))
         job = self._library.enqueue(
             video_id, artist, title,
             source=source, spotify_url=spotify_url, spotify_id=spotify_id,
@@ -85,6 +94,10 @@ class Worker:
             self._wake.clear()
 
     def _process(self, job: Job) -> None:
+        reason = self.cookies.allow(self._spotdl.settings)
+        if reason is not None:
+            self._library.finish(job.id, ok=False, error=reason)
+            return
         url, spotify_id = job.spotify_url, job.spotify_id
         if url is None:
             lookup = self._spotdl.lookup(f"{job.artist} - {job.title}")

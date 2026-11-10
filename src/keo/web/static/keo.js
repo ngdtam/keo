@@ -18,6 +18,31 @@ document.addEventListener("click", async (event) => {
   }
 });
 
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-library-download]");
+  if (!button) return;
+  button.disabled = true;
+  const bar = button.parentElement.querySelector("[data-status]");
+  try {
+    const response = await fetch(button.dataset.libraryDownload, {
+      method: "POST",
+      credentials: "same-origin",
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      button.textContent = data.detail || "Failed";
+      button.disabled = false;
+      return;
+    }
+    bar.classList.remove("bg-red", "bg-green", "bg-yellow");
+    bar.classList.add("bg-yellow");
+    button.textContent = "Queued";
+  } catch {
+    button.textContent = "Failed";
+    button.disabled = false;
+  }
+});
+
 function label(data) {
   if (data.owned) return "In library";
   if (data.job) return data.job.status === "queued" ? "Queued" : data.job.status;

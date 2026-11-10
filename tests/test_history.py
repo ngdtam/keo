@@ -15,7 +15,10 @@ def plays(video_id="vid1", artist="Sơn Tùng M-TP", title="Lạc Trôi", count=
 
 
 def pull(catalog, library, worker, spotdl, now=NIGHT):
-    return run_pull(catalog=catalog, library=library, worker=worker, spotdl=spotdl, now=now)
+    return run_pull(
+        catalog=catalog, library=library, worker=worker, spotdl=spotdl,
+        cookies=worker.cookies, now=now,
+    )
 
 
 def test_close_match_played_three_times_is_queued(catalog, library, worker, spotdl):
@@ -131,6 +134,7 @@ def test_scheduler_runs_once_per_day(catalog, library, worker, spotdl):
     clock = [NIGHT]
     scheduler = Scheduler(
         catalog=catalog, library=library, worker=worker, spotdl=spotdl,
+        cookies=worker.cookies,
         timezone="Asia/Ho_Chi_Minh", hour=23, clock=lambda: clock[0],
     )
     assert scheduler.tick()
@@ -142,9 +146,34 @@ def test_scheduler_runs_once_per_day(catalog, library, worker, spotdl):
 def test_scheduler_waits_for_the_next_day_after_a_failed_pull(catalog, library, worker, spotdl):
     scheduler = Scheduler(
         catalog=catalog, library=library, worker=worker, spotdl=spotdl,
+        cookies=worker.cookies,
         timezone="Asia/Ho_Chi_Minh", hour=23, clock=lambda: NIGHT,
     )
     catalog.fail = True
     assert scheduler.tick()
     catalog.fail = False
     assert not scheduler.tick()
+
+
+import logging
+
+from keo.config import SpotdlSettings
+from keo.cookies import MISSING_LINE
+from keo.history import decide
+
+
+def test_a_close_match_is_not_queued_when_the_cookie_is_refused(
+    catalog, library, worker, spotdl, caplog
+):
+    spotdl.candidates[QUERY] = candidate(name="Lạc Trôi (feat. Triple D)", artist="SƠN TÙNG M-TP")
+    spotdl.settings = SpotdlSettings(format="opus")
+    with caplog.at_level(logging.WARNING):
+        result = decide(
+            "vid1", "Sơn Tùng M-TP", "Lạc Trôi",
+            library=library, worker=worker, spotdl=spotdl, cookies=worker.cookies,
+        )
+    assert result == "cookie"
+    assert MISSING_LINE in caplog.text
+    assert library.active_job("vid1") is None
+    assert library.get_review("vid1") is None
+    assert library.list_jobs() == []

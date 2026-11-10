@@ -13,6 +13,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from keo.catalog import Catalog, CatalogError
+from keo.cookies import CookieGate
 from keo.jobs import Worker
 from keo.library import Library
 from keo.match import Name, is_close
@@ -32,6 +33,7 @@ def decide(
     library: Library,
     worker: Worker,
     spotdl: Spotdl,
+    cookies: CookieGate,
     source: str = "history",
     replace_review: bool = False,
 ) -> str:
@@ -43,6 +45,10 @@ def decide(
         library.mark_owned(video_id, artist, title, candidate.song_id)
         return "owned"
     if is_close(Name(artist, title), Name(candidate.primary_artist, candidate.name)):
+        reason = cookies.allow(spotdl.settings)
+        if reason is not None:
+            log.warning("%s", reason)
+            return "cookie"
         worker.submit(
             video_id, artist, title,
             source=source, spotify_url=candidate.url, spotify_id=candidate.song_id,
@@ -61,7 +67,13 @@ def decide(
 
 
 def run_pull(
-    *, catalog: Catalog, library: Library, worker: Worker, spotdl: Spotdl, now: datetime
+    *,
+    catalog: Catalog,
+    library: Library,
+    worker: Worker,
+    spotdl: Spotdl,
+    cookies: CookieGate,
+    now: datetime,
 ) -> int | None:
     started_at = now.isoformat(timespec="seconds")
     try:
@@ -81,7 +93,7 @@ def run_pull(
         try:
             decide(
                 heard.video_id, heard.artist, heard.title,
-                library=library, worker=worker, spotdl=spotdl,
+                library=library, worker=worker, spotdl=spotdl, cookies=cookies,
             )
         except Exception:
             log.exception("History decision failed for %s", heard.video_id)
@@ -105,6 +117,7 @@ class Scheduler:
         library: Library,
         worker: Worker,
         spotdl: Spotdl,
+        cookies: CookieGate,
         timezone: str,
         hour: int,
         clock: Callable[[], datetime] | None = None,
@@ -114,6 +127,7 @@ class Scheduler:
         self._library = library
         self._worker = worker
         self._spotdl = spotdl
+        self._cookies = cookies
         self._hour = hour
         self._clock = clock or (lambda: datetime.now(zone))
         self._last_attempt: date | None = None
@@ -127,7 +141,7 @@ class Scheduler:
         self._last_attempt = now.date()
         run_pull(
             catalog=self._catalog, library=self._library,
-            worker=self._worker, spotdl=self._spotdl, now=now,
+            worker=self._worker, spotdl=self._spotdl, cookies=self._cookies, now=now,
         )
         return True
 

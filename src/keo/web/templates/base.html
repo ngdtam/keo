@@ -5,30 +5,31 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Kéo{% endblock %}</title>
   <link rel="stylesheet" href="/static/tabler.min.css">
+  <link rel="stylesheet" href="/static/keo.css">
 </head>
 <body>
   {% set path = request.url.path %}
   <div class="page">
     {% if path != '/login' %}
-    <header class="navbar navbar-expand-md d-print-none">
-      <div class="container-xl">
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbar-menu" aria-controls="navbar-menu" aria-expanded="false" aria-label="Open menu">
+    <aside class="navbar navbar-vertical navbar-expand-lg" data-bs-theme="dark">
+      <div class="container-fluid">
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#sidebar-menu" aria-controls="sidebar-menu" aria-expanded="false" aria-label="Open menu">
           <span class="navbar-toggler-icon"></span>
         </button>
-        <a href="/" class="navbar-brand">Kéo</a>
-        <div class="collapse navbar-collapse" id="navbar-menu">
-          <ul class="navbar-nav">
-            <li class="nav-item"><a class="nav-link{% if path == '/' %} active{% endif %}" href="/" {% if path == '/' %}aria-current="page"{% endif %}>Home</a></li>
-            <li class="nav-item"><a class="nav-link{% if path.startswith('/library') %} active{% endif %}" href="/library" {% if path.startswith('/library') %}aria-current="page"{% endif %}>Library</a></li>
-            <li class="nav-item"><a class="nav-link{% if path == '/search' %} active{% endif %}" href="/search" {% if path == '/search' %}aria-current="page"{% endif %}>Search</a></li>
-            <li class="nav-item"><a class="nav-link{% if path == '/charts' or path.startswith('/playlists/') %} active{% endif %}" href="/charts" {% if path == '/charts' or path.startswith('/playlists/') %}aria-current="page"{% endif %}>Charts</a></li>
-            <li class="nav-item"><a class="nav-link{% if path == '/moods' or path.startswith('/moods/') %} active{% endif %}" href="/moods" {% if path == '/moods' or path.startswith('/moods/') %}aria-current="page"{% endif %}>Moods</a></li>
-            <li class="nav-item"><a class="nav-link{% if path == '/review' %} active{% endif %}" href="/review" {% if path == '/review' %}aria-current="page"{% endif %}>Review</a></li>
-            <li class="nav-item"><a class="nav-link{% if path == '/settings' %} active{% endif %}" href="/settings" {% if path == '/settings' %}aria-current="page"{% endif %}>Settings</a></li>
+        <a href="/" class="navbar-brand"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="2" width="20" height="20" rx="6" fill="currentColor"/><text x="12" y="16" text-anchor="middle" font-size="12" font-family="ui-sans-serif, system-ui, sans-serif" fill="#3f2a1d">K</text></svg>Kéo</a>
+        <div class="collapse navbar-collapse" id="sidebar-menu">
+          <ul class="navbar-nav pt-lg-3">
+            <li class="nav-item"><a class="nav-link{% if path == '/' %} active{% endif %}" href="/" {% if path == '/' %}aria-current="page"{% endif %}><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10.5 12 4l8 6.5V20a1 1 0 0 1-1 1h-5v-6H10v6H5a1 1 0 0 1-1-1z"/></svg>Home</a></li>
+            <li class="nav-item"><a class="nav-link{% if path.startswith('/library') %} active{% endif %}" href="/library" {% if path.startswith('/library') %}aria-current="page"{% endif %}><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></svg>Library</a></li>
+            <li class="nav-item"><a class="nav-link{% if path == '/search' %} active{% endif %}" href="/search" {% if path == '/search' %}aria-current="page"{% endif %}><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>Search</a></li>
+            <li class="nav-item"><a class="nav-link{% if path == '/charts' or path.startswith('/playlists/') %} active{% endif %}" href="/charts" {% if path == '/charts' or path.startswith('/playlists/') %}aria-current="page"{% endif %}><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 20V10M12 20V4M19 20v-7"/></svg>Charts</a></li>
+            <li class="nav-item"><a class="nav-link{% if path == '/moods' or path.startswith('/moods/') %} active{% endif %}" href="/moods" {% if path == '/moods' or path.startswith('/moods/') %}aria-current="page"{% endif %}><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8"/><path d="M8.5 10h.01M15.5 10h.01M8.5 15c1.2 1.2 5.8 1.2 7 0"/></svg>Moods</a></li>
+            <li class="nav-item"><a class="nav-link{% if path == '/review' %} active{% endif %}" href="/review" {% if path == '/review' %}aria-current="page"{% endif %}><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></svg>Review</a></li>
+            <li class="nav-item"><a class="nav-link{% if path == '/settings' %} active{% endif %}" href="/settings" {% if path == '/settings' %}aria-current="page"{% endif %}><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="8" cy="7" r="2" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"/><circle cx="10" cy="17" r="2" fill="currentColor" stroke="none"/></svg>Settings</a></li>
           </ul>
         </div>
       </div>
-    </header>
+    </aside>
     {% endif %}
     <div class="page-wrapper">
       <div class="page-body">
