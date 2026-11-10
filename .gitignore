@@ -13,3 +13,4 @@ secrets/
 .DS_Store
 docs/superpowers/
 .worktrees/
+compose.override.yaml

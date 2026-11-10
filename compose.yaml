@@ -1,7 +1,6 @@
 services:
   keo:
-    build: .
-    image: keo:local
+    image: ghcr.io/ngdtam/keo:latest
     restart: unless-stopped
     user: "${PUID:-1000}:${PGID:-1000}"
     ports:
