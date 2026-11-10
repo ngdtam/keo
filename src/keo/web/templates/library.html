@@ -8,7 +8,7 @@
     <input id="cover-size" type="range" min="96" max="320" step="8" value="160">
   </label>
 </div>
-<div class="d-flex flex-wrap gap-3">
+<div class="library-grid d-flex flex-wrap gap-3">
   {% for row in rows %}
   <div class="card" style="width: var(--cover, 160px)">
     <a href="{{ row.href }}" class="card-link">
