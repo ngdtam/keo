@@ -107,7 +107,7 @@ def _context(request: Request, error: str | None = None) -> dict:
     return {
         "auth_error": auth_error,
         "gaps": gaps,
-        "cookie_line": "Cookie file found" if ready else "Cookie file missing",
+        "cookie_line": services.cookies.line(settings),
         "warnings": warnings,
         "groups": groups,
         "error": error,
@@ -185,4 +185,14 @@ async def upload_cookie(request: Request, cookie: UploadFile):
             status_code=400,
         )
     services.spotdl.use(updated)
+    services.cookies.check(str(path))
+    return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/cookie/check", **PAGE)
+def check_cookie(request: Request):
+    services = get_services(request)
+    settings = services.spotdl.settings
+    if cookie_ready(settings):
+        services.cookies.check(settings.cookie_file)
     return RedirectResponse("/settings", status_code=303)
