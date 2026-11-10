@@ -86,6 +86,7 @@ def _open(tmp_path, catalog, library, worker, spotdl, auth_text, settings=None):
         library=library,
         worker=worker,
         spotdl=spotdl,
+        cookies=worker.cookies,
         run_later=lambda fn: fn(),
         ytm_auth=auth,
     )

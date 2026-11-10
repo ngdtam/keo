@@ -200,7 +200,7 @@ def test_dashboard_links_a_failed_song(logged_in, library):
     assert "Broken" in text
 
 
-def test_download_stores_one_new_file(library, spotdl, tmp_path):
+def test_download_stores_one_new_file(library, spotdl, tmp_path, cookies):
     music = tmp_path / "music"
     music.mkdir()
 
@@ -209,7 +209,7 @@ def test_download_stores_one_new_file(library, spotdl, tmp_path):
         return DownloadResult(True, "")
 
     spotdl.download = download
-    worker = Worker(library, spotdl, music)
+    worker = Worker(library, spotdl, music, cookies=cookies)
     worker.submit("vid1", "A", "Song", spotify_url=URL, spotify_id="sp1")
     assert worker.run_once()
     assert library.audio_path("sp1") == str(music / "A - Song.opus")
@@ -266,11 +266,11 @@ def test_missing_probe_leaves_the_labels_out(logged_in, library, tmp_path, monke
     assert "Bit depth" not in song
 
 
-def test_download_stores_nothing_when_no_file_appears(library, spotdl, tmp_path):
+def test_download_stores_nothing_when_no_file_appears(library, spotdl, tmp_path, cookies):
     music = tmp_path / "music"
     music.mkdir()
     spotdl.download = lambda url, spotify_id: DownloadResult(True, "")
-    worker = Worker(library, spotdl, music)
+    worker = Worker(library, spotdl, music, cookies=cookies)
     worker.submit("vid1", "A", "Song", spotify_url=URL, spotify_id="sp1")
     assert worker.run_once()
     assert library.audio_path("sp1") is None

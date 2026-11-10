@@ -33,7 +33,7 @@ def auth_file(tmp_path):
 
 
 @pytest.fixture
-def page(catalog, library, worker, spotdl, config_file, auth_file):
+def page(catalog, library, worker, spotdl, config_file, auth_file, cookies):
     spotdl.settings = SpotdlSettings()
     services = Services(
         token=TOKEN,
@@ -41,6 +41,7 @@ def page(catalog, library, worker, spotdl, config_file, auth_file):
         library=library,
         worker=worker,
         spotdl=spotdl,
+        cookies=cookies,
         run_later=lambda fn: fn(),
         config_path=config_file,
         ytm_auth=auth_file,

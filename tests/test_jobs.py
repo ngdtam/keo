@@ -148,3 +148,26 @@ def test_queue_error_does_not_kill_the_worker(worker, library, monkeypatch):
     finally:
         worker.stop()
     assert not worker._thread.is_alive()
+
+
+from keo.config import SpotdlSettings
+from keo.cookies import MISSING_LINE
+
+
+def test_bitrate_disable_with_a_cookie_file_is_stored_as_premium(worker, spotdl, tmp_path):
+    path = tmp_path / "cookies.txt"
+    path.write_text("a", encoding="utf-8")
+    spotdl.settings = SpotdlSettings(format="mp3", bitrate="disable", cookie_file=str(path))
+    job = submit(worker)
+    assert (job.format, job.premium) == ("mp3", 1)
+
+
+def test_a_premium_job_fails_before_lookup_when_the_cookie_is_missing(worker, library, spotdl):
+    spotdl.settings = SpotdlSettings(format="opus")
+    job = submit(worker)
+    assert job.premium == 0
+    assert worker.run_once()
+    stored = library.get_job(job.id)
+    assert (stored.status, stored.error) == ("failed", MISSING_LINE)
+    assert spotdl.lookups == []
+    assert spotdl.downloads == []
