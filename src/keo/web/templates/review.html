@@ -1,8 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Review{% endblock %}
 {% block content %}
-<h2 class="page-title mb-3">Review</h2>
-<p class="text-secondary">Songs you played 3 or more times today whose Spotify match was not close enough to download on their own.</p>
+<div class="row align-items-center mb-3">
+  <div class="col">
+    <h2 class="page-title">Review</h2>
+  </div>
+  <div class="col-auto">
+    <button type="button" class="btn" data-post="/api/history/pull">Check history now</button>
+  </div>
+</div>
+<p class="text-secondary">Songs you played today whose Spotify match was not close enough to download on their own.</p>
 <div class="card">
   <ul class="list-group list-group-flush">
   {% for row in rows %}

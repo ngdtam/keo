@@ -239,3 +239,10 @@ def test_history_pull_triggers_background_pull(client, auth, catalog, library, w
     assert response.status_code == 202
     assert response.json() == {"status": "checking"}
     assert library.active_job("vid1") is not None
+
+
+def test_review_page_renders_check_history_button(logged_in):
+    response = logged_in.get("/review")
+    assert response.status_code == 200
+    assert 'data-post="/api/history/pull"' in response.text
+    assert "Check history now" in response.text
