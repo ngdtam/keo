@@ -62,6 +62,12 @@ def require_page(request: Request) -> None:
         raise LoginRequired()
 
 
+def require_download(services: Services) -> None:
+    reason = services.cookies.allow(services.spotdl.settings)
+    if reason is not None:
+        raise HTTPException(status_code=409, detail=reason)
+
+
 def song_json(song: SongRow) -> dict[str, Any]:
     data = asdict(song)
     data["artists"] = list(song.artists)

@@ -115,3 +115,104 @@ def test_review_and_jobs_pages(logged_in, library, worker):
     assert jobs.status_code == 303
     assert jobs.headers["location"] == "/library"
     assert "Bài Này Chill Phết" in logged_in.get("/library").text
+
+
+from keo.config import SpotdlSettings
+from keo.cookies import EXPIRED_LINE, FAILED_LINE, FREE_LINE, MISSING_LINE, ProbeResult
+
+BODY = {"video_id": "vid1", "title": "Lạc Trôi", "artists": ["Sơn Tùng M-TP"]}
+
+
+def _cookie(tmp_path):
+    path = tmp_path / "cookies.txt"
+    path.write_text("a", encoding="utf-8")
+    return path
+
+
+def test_a_missing_cookie_is_409(client, auth, library, spotdl, probe):
+    spotdl.settings = SpotdlSettings(format="opus")
+    response = client.post("/api/downloads", json=BODY, headers=auth)
+    assert response.status_code == 409
+    assert response.json()["detail"] == MISSING_LINE
+    assert library.list_jobs() == []
+    assert probe.calls == []
+
+
+def test_an_expired_cookie_is_409_and_the_next_tap_does_not_probe(
+    client, auth, library, spotdl, probe, tmp_path
+):
+    path = _cookie(tmp_path)
+    spotdl.settings = SpotdlSettings(format="opus", cookie_file=str(path))
+    probe.results.append(ProbeResult([{"format_id": "141"}], "cookies are no longer valid"))
+    first = client.post("/api/downloads", json=BODY, headers=auth)
+    second = client.post("/api/downloads", json=BODY, headers=auth)
+    assert first.status_code == 409
+    assert second.status_code == 409
+    assert first.json()["detail"] == EXPIRED_LINE
+    assert second.json()["detail"] == EXPIRED_LINE
+    assert library.list_jobs() == []
+    assert probe.calls == [str(path)]
+
+
+def test_a_free_account_is_409(client, auth, library, spotdl, probe, tmp_path):
+    path = _cookie(tmp_path)
+    spotdl.settings = SpotdlSettings(format="m4a", cookie_file=str(path))
+    probe.results.append(ProbeResult([{"format_id": "251"}], ""))
+    response = client.post("/api/downloads", json=BODY, headers=auth)
+    assert response.status_code == 409
+    assert response.json()["detail"] == FREE_LINE
+    assert library.list_jobs() == []
+    assert probe.calls == [str(path)]
+
+
+def test_an_unknown_probe_is_409(client, auth, library, spotdl, probe, tmp_path):
+    path = _cookie(tmp_path)
+    spotdl.settings = SpotdlSettings(format="opus", bitrate="disable", cookie_file=str(path))
+    probe.results.append(ProbeResult(None, "timed out"))
+    response = client.post("/api/downloads", json=BODY, headers=auth)
+    assert response.status_code == 409
+    assert response.json()["detail"] == FAILED_LINE
+    assert library.list_jobs() == []
+    assert probe.calls == [str(path)]
+
+
+def test_a_free_download_queues_without_a_probe(client, auth, library, spotdl, probe, tmp_path):
+    path = tmp_path / "cookies.txt"
+    path.write_text("a", encoding="utf-8")
+    spotdl.settings = SpotdlSettings(format="ogg", cookie_file=str(path))
+    response = client.post("/api/downloads", json=BODY, headers=auth)
+    assert response.status_code == 200
+    assert response.json()["job"]["status"] == "queued"
+    assert probe.calls == []
+    assert len(library.list_jobs()) == 1
+
+
+def test_review_download_refuses_before_it_queues(client, auth, library, spotdl):
+    add_weak_row(library)
+    spotdl.settings = SpotdlSettings(format="opus")
+    response = client.post("/api/review/vid1/download", headers=auth)
+    assert response.status_code == 409
+    assert response.json()["detail"] == MISSING_LINE
+    assert library.active_job("vid1") is None
+    assert library.get_review("vid1") is not None
+
+
+def test_library_and_job_retry_refuse_and_leave_the_failed_job(client, auth, library, spotdl):
+    spotdl.settings = SpotdlSettings(format="opus")
+    job = library.enqueue(
+        "vid1", "A", "Song", source="manual", spotify_id="sp1", spotify_url=URL,
+    )
+    library.finish(job.id, ok=False, error="boom")
+    spotify = client.post("/api/library/spotify/sp1/download", headers=auth)
+    assert spotify.status_code == 409
+    assert spotify.json()["detail"] == MISSING_LINE
+    video = library.enqueue("vid2", "Đen", "No Match", source="manual")
+    library.finish(video.id, ok=False, error="boom")
+    video_response = client.post("/api/library/video/vid2/download", headers=auth)
+    assert video_response.status_code == 409
+    assert video_response.json()["detail"] == MISSING_LINE
+    retry = client.post(f"/api/jobs/{job.id}/retry", headers=auth)
+    assert retry.status_code == 409
+    assert retry.json()["detail"] == MISSING_LINE
+    assert library.get_job(job.id).status == "failed"
+    assert library.get_job(video.id).status == "failed"

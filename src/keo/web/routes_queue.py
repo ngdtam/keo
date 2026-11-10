@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from keo.history import decide
 from keo.library import Job
-from keo.web.deps import TEMPLATES, get_services, require_api, require_page
+from keo.web.deps import TEMPLATES, get_services, require_api, require_download, require_page
 
 router = APIRouter()
 PAGE = {"response_class": HTMLResponse, "dependencies": [Depends(require_page)]}
@@ -45,8 +45,10 @@ def queued(job: Job | None) -> dict:
 
 @router.post("/api/downloads", **API)
 def api_download(request: Request, body: DownloadRequest):
+    services = get_services(request)
+    require_download(services)
     artist = body.artists[0] if body.artists else ""
-    return queued(get_services(request).worker.submit(body.video_id, artist, body.title))
+    return queued(services.worker.submit(body.video_id, artist, body.title))
 
 
 @router.get("/review", **PAGE)
@@ -66,6 +68,7 @@ def api_review_download(request: Request, video_id: str):
     row = services.library.get_review(video_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Not on the review list")
+    require_download(services)
     if row.spotify_url:
         job = services.worker.submit(
             row.video_id, row.heard_artist, row.heard_title,
@@ -94,7 +97,11 @@ def api_jobs(request: Request):
 
 @router.post("/api/jobs/{job_id}/retry", **API)
 def api_retry(request: Request, job_id: int):
-    job = get_services(request).worker.retry(job_id)
+    services = get_services(request)
+    if services.library.get_job(job_id) is None:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    require_download(services)
+    job = services.worker.retry(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown job")
     return queued(job)

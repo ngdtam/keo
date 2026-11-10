@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from keo.audio_info import load
 from keo.library import Job, inside_music, unique_title_file
-from keo.web.deps import TEMPLATES, get_services, require_api, require_page
+from keo.web.deps import TEMPLATES, get_services, require_api, require_download, require_page
 from keo.web.routes_queue import _detail, format_job_time, queued
 
 router = APIRouter()
@@ -237,8 +237,10 @@ def _redownload(services, kind: str, ident: str, jobs: list[Job]):
         services.library.forget_video(ident)
     failed = next((job for job in jobs if job.status == "failed"), None)
     if failed is not None:
+        require_download(services)
         return queued(services.worker.retry(failed.id))
     newest = jobs[0]
+    require_download(services)
     job = services.worker.submit(
         newest.video_id, newest.artist, newest.title,
         source="library", spotify_url=newest.spotify_url, spotify_id=newest.spotify_id,
