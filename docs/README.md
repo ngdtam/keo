@@ -23,7 +23,7 @@
 4. Start it:
 
    ```bash
-   docker compose up -d --build
+   docker compose up -d
    docker compose logs -f keo
    ```
 
@@ -32,3 +32,12 @@
 5. Open `http://<server>:8000` on your phone and sign in with `KEO_TOKEN`. To reach the server from outside your home network, use your own VPN or tunnel.
 
 A choice on the Settings page is saved into `keo.toml` and used on the next download. A hand edit of `keo.toml` still needs `docker compose restart keo`.
+
+# Development
+
+To build from local source instead of pulling the image:
+
+```bash
+docker compose -f compose.yaml -f compose.dev.yaml up -d --build
+```
+
