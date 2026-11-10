@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
-from keo.history import decide
+from keo.history import decide, run_pull
 from keo.library import Job
 from keo.web.deps import TEMPLATES, get_services, require_api, require_download, require_page
 
@@ -60,6 +60,23 @@ def review_page(request: Request):
 @router.get("/api/review", **API)
 def api_review(request: Request):
     return [asdict(row) for row in get_services(request).library.list_review()]
+
+
+@router.post("/api/history/pull", **API)
+def api_history_pull(request: Request):
+    services = get_services(request)
+    now = datetime.now(ZoneInfo(services.timezone))
+    services.run_later(
+        lambda: run_pull(
+            catalog=services.catalog,
+            library=services.library,
+            worker=services.worker,
+            spotdl=services.spotdl,
+            cookies=services.cookies,
+            now=now,
+        )
+    )
+    return JSONResponse({"status": "checking"}, status_code=202)
 
 
 @router.post("/api/review/{video_id}/download", **API)

@@ -1,5 +1,6 @@
 import pytest
 
+from keo.records import HistoryItem
 from keo.web.routes_queue import format_job_time
 from tests.fakes import QUERY, candidate
 
@@ -225,3 +226,16 @@ def test_library_and_job_retry_refuse_and_leave_the_failed_job(client, auth, lib
     assert retry.json()["detail"] == MISSING_LINE
     assert library.get_job(job.id).status == "failed"
     assert library.get_job(video.id).status == "failed"
+
+
+def test_history_pull_requires_token(client):
+    assert client.post("/api/history/pull").status_code == 401
+
+
+def test_history_pull_triggers_background_pull(client, auth, catalog, library, worker, spotdl):
+    catalog.history_items = [HistoryItem("vid1", "Sơn Tùng M-TP", "Lạc Trôi", "Today")]
+    spotdl.candidates[QUERY] = candidate()
+    response = client.post("/api/history/pull", headers=auth)
+    assert response.status_code == 202
+    assert response.json() == {"status": "checking"}
+    assert library.active_job("vid1") is not None
