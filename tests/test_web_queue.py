@@ -203,14 +203,23 @@ def test_library_and_job_retry_refuse_and_leave_the_failed_job(client, auth, lib
         "vid1", "A", "Song", source="manual", spotify_id="sp1", spotify_url=URL,
     )
     library.finish(job.id, ok=False, error="boom")
+    library.mark_owned("vid1", "A", "Song", "sp1")
+    library._archive_path.write_text(URL + "\n")
     spotify = client.post("/api/library/spotify/sp1/download", headers=auth)
     assert spotify.status_code == 409
     assert spotify.json()["detail"] == MISSING_LINE
+    assert library.has_spotify("sp1")
+    assert library.is_owned_spotify("sp1")
+    assert URL in library._archive_path.read_text()
+    assert library.get_job(job.id).status == "failed"
     video = library.enqueue("vid2", "Đen", "No Match", source="manual")
     library.finish(video.id, ok=False, error="boom")
+    library.mark_owned("vid2", "Đen", "No Match", None)
     video_response = client.post("/api/library/video/vid2/download", headers=auth)
     assert video_response.status_code == 409
     assert video_response.json()["detail"] == MISSING_LINE
+    assert library.is_owned("vid2", "Đen", "No Match")
+    assert library.get_job(video.id).status == "failed"
     retry = client.post(f"/api/jobs/{job.id}/retry", headers=auth)
     assert retry.status_code == 409
     assert retry.json()["detail"] == MISSING_LINE

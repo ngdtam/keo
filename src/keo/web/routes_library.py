@@ -231,16 +231,15 @@ def _redownload(services, kind: str, ident: str, jobs: list[Job]):
     path = _known_file(services, ident, jobs) if kind == "spotify" else None
     if path is not None:
         raise HTTPException(status_code=409, detail="The file is already on disk.")
+    require_download(services)
     if kind == "spotify":
         services.library.forget_spotify(ident)
     else:
         services.library.forget_video(ident)
     failed = next((job for job in jobs if job.status == "failed"), None)
     if failed is not None:
-        require_download(services)
         return queued(services.worker.retry(failed.id))
     newest = jobs[0]
-    require_download(services)
     job = services.worker.submit(
         newest.video_id, newest.artist, newest.title,
         source="library", spotify_url=newest.spotify_url, spotify_id=newest.spotify_id,
