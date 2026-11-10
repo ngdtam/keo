@@ -79,6 +79,7 @@ def api_review_download(request: Request, video_id: str):
         lambda: decide(
             row.video_id, row.heard_artist, row.heard_title,
             library=services.library, worker=services.worker, spotdl=services.spotdl,
+            cookies=services.cookies,
             source="review", replace_review=True,
         )
     )

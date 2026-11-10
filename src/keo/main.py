@@ -60,6 +60,7 @@ def build_app() -> FastAPI:
         library=library,
         worker=worker,
         spotdl=spotdl,
+        cookies=cookies,
         timezone=settings.history_timezone,
         hour=settings.history_hour,
     )
