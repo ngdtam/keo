@@ -255,7 +255,10 @@ def test_spotdl_accepts_every_settings_button(paths, tmp_path, monkeypatch):
             parsed = _parse_spotdl(args)
             assert tuple(parsed.audio_providers) == settings.audio
             assert tuple(parsed.lyrics_providers) == settings.lyrics
-            assert parsed.cookie_file == settings.cookie_file
+            if "--cookie-file" in args:
+                assert parsed.cookie_file == settings.cookie_file
+            else:
+                assert parsed.cookie_file is None
             if operation == "download":
                 assert parsed.format == settings.format
                 assert parsed.bitrate == settings.bitrate
@@ -274,3 +277,17 @@ def test_spotdl_accepts_every_settings_button(paths, tmp_path, monkeypatch):
                 assert parsed.preload is (True if settings.preload else None)
                 assert "--format" not in args
                 assert "--bitrate" not in args
+
+
+def test_a_free_format_omits_the_cookie_file(paths, tmp_path):
+    cookies = str(tmp_path / "cookies.txt")
+    settings = SpotdlSettings(cookie_file=cookies, format="mp3", bitrate="128k")
+    args = build_args(settings, paths, "download", URL)
+    assert "--cookie-file" not in args
+
+
+def test_bitrate_disable_passes_the_cookie_file(paths, tmp_path):
+    cookies = str(tmp_path / "cookies.txt")
+    settings = SpotdlSettings(cookie_file=cookies, format="mp3", bitrate="disable")
+    args = build_args(settings, paths, "download", URL)
+    assert values_after(args, "--cookie-file") == [cookies]

@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 from keo.archive import archive_ids, track_id
 from keo.config import FORMATS, SpotdlSettings
+from keo.cookies import settings_are_premium
 
 Operation = Literal["save", "download"]
 Runner = Callable[..., subprocess.CompletedProcess]
@@ -106,7 +107,8 @@ def build_args(
     _value(args, "--proxy", s.proxy)
     _value(args, "--client-id", s.client_id)
     _value(args, "--client-secret", s.client_secret)
-    _value(args, "--cookie-file", s.cookie_file)
+    if settings_are_premium(s):
+        _value(args, "--cookie-file", s.cookie_file)
     return args
 
 
