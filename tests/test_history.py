@@ -21,20 +21,21 @@ def pull(catalog, library, worker, spotdl, now=NIGHT):
     )
 
 
-def test_close_match_played_once_is_queued(catalog, library, worker, spotdl):
+def test_close_match_played_once_goes_to_review(catalog, library, worker, spotdl):
     catalog.history_items = plays(count=1)
     spotdl.candidates[QUERY] = candidate(name="Lạc Trôi (feat. Triple D)", artist="SƠN TÙNG M-TP")
     pull(catalog, library, worker, spotdl)
-    job = library.active_job("vid1")
-    assert (job.source, job.spotify_url) == ("history", URL)
-    assert library.get_review("vid1") is None
+    assert library.active_job("vid1") is None
+    row = library.get_review("vid1")
+    assert row is not None
+    assert (row.reason, row.spotify_url) == ("close_match", URL)
 
 
 def test_single_play_today_qualifies_for_lookup(catalog, library, worker, spotdl):
     catalog.history_items = plays(count=1)
     spotdl.candidates[QUERY] = candidate(name="Lạc Trôi (feat. Triple D)", artist="SƠN TÙNG M-TP")
     pull(catalog, library, worker, spotdl)
-    assert library.active_job("vid1") is not None
+    assert library.get_review("vid1") is not None
 
 
 def test_plays_from_other_days_do_not_count(catalog, library, worker, spotdl):
@@ -80,8 +81,8 @@ def test_one_song_failing_does_not_stop_the_rest(catalog, library, worker, spotd
         name="Bài Này Chill Phết", artist="Đen", song_id="sp2"
     )
     pull(catalog, library, worker, spotdl)
-    assert library.active_job("vid1") is None
-    assert library.active_job("vid2") is not None
+    assert library.get_review("vid1") is None
+    assert library.get_review("vid2") is not None
 
 
 def test_failed_history_call_changes_nothing(catalog, library, worker, spotdl):
@@ -101,14 +102,20 @@ def test_existing_review_row_is_kept_on_another_weak_match(catalog, library, wor
     assert library.get_review("vid1").reason == "no_metadata"
 
 
-def test_close_match_later_clears_review_once_owned(catalog, library, worker, spotdl):
+def test_close_match_review_downloads_and_clears_review(catalog, library, worker, spotdl):
     library.add_review("vid1", "Sơn Tùng M-TP", "Lạc Trôi", reason="weak_match")
-    catalog.history_items = plays()
-    spotdl.candidates[QUERY] = candidate()
-    pull(catalog, library, worker, spotdl)
+    worker.submit("vid1", "Sơn Tùng M-TP", "Lạc Trôi", spotify_url=URL, spotify_id="sp1")
     worker.run_once()
     assert library.get_review("vid1") is None
     assert library.is_owned("vid1", "", "")
+
+
+def test_dismissed_song_is_skipped(catalog, library, worker, spotdl):
+    library.dismiss("vid1")
+    catalog.history_items = plays(count=1)
+    pull(catalog, library, worker, spotdl)
+    assert spotdl.lookups == []
+    assert library.get_review("vid1") is None
 
 
 def test_not_due_before_the_hour(library):
@@ -152,27 +159,3 @@ def test_scheduler_waits_for_the_next_day_after_a_failed_pull(catalog, library, 
     assert scheduler.tick()
     catalog.fail = False
     assert not scheduler.tick()
-
-
-import logging
-
-from keo.config import SpotdlSettings
-from keo.cookies import MISSING_LINE
-from keo.history import decide
-
-
-def test_a_close_match_is_not_queued_when_the_cookie_is_refused(
-    catalog, library, worker, spotdl, caplog
-):
-    spotdl.candidates[QUERY] = candidate(name="Lạc Trôi (feat. Triple D)", artist="SƠN TÙNG M-TP")
-    spotdl.settings = SpotdlSettings(format="opus")
-    with caplog.at_level(logging.WARNING):
-        result = decide(
-            "vid1", "Sơn Tùng M-TP", "Lạc Trôi",
-            library=library, worker=worker, spotdl=spotdl, cookies=worker.cookies,
-        )
-    assert result == "cookie"
-    assert MISSING_LINE in caplog.text
-    assert library.active_job("vid1") is None
-    assert library.get_review("vid1") is None
-    assert library.list_jobs() == []

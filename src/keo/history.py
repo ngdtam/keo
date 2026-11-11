@@ -1,7 +1,7 @@
 """The daily YouTube Music history check.
 
-A song played today downloads on its own only when the Spotify match is close.
-Anything else waits on the review list for a tap.
+Songs played today are matched on Spotify and added to the review list for a
+tap.
 """
 
 from __future__ import annotations
@@ -44,19 +44,14 @@ def decide(
     if library.is_owned_spotify(candidate.song_id):
         library.mark_owned(video_id, artist, title, candidate.song_id)
         return "owned"
-    if is_close(Name(artist, title), Name(candidate.primary_artist, candidate.name)):
-        reason = cookies.allow(spotdl.settings)
-        if reason is not None:
-            log.warning("%s", reason)
-            return "cookie"
-        worker.submit(
-            video_id, artist, title,
-            source=source, spotify_url=candidate.url, spotify_id=candidate.song_id,
-        )
-        return "queued"
+    reason = (
+        "close_match"
+        if is_close(Name(artist, title), Name(candidate.primary_artist, candidate.name))
+        else "weak_match"
+    )
     library.add_review(
         video_id, artist, title,
-        reason="weak_match",
+        reason=reason,
         candidate_artist=candidate.primary_artist,
         candidate_title=candidate.name,
         spotify_url=candidate.url,
@@ -85,6 +80,8 @@ def run_pull(
     pull_id = library.record_pull(started_at, "ok", None, items)
     for heard in library.count_today(pull_id):
         if heard.plays < PLAYS_TO_QUALIFY:
+            continue
+        if library.is_dismissed(heard.video_id):
             continue
         if library.is_owned(heard.video_id, heard.artist, heard.title):
             continue
