@@ -119,6 +119,22 @@ def api_review_download(request: Request, video_id: str):
     return JSONResponse({"status": "checking"}, status_code=202)
 
 
+@router.post("/api/review/{video_id}/download-youtube", **API)
+def api_review_download_youtube(request: Request, video_id: str):
+    services = get_services(request)
+    row = services.library.get_review(video_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Not on the review list")
+    job = services.worker.submit(
+        row.video_id,
+        row.heard_artist,
+        row.heard_title,
+        source="youtube",
+    )
+    return queued(job)
+
+
+
 @router.get("/jobs", **PAGE)
 def jobs_page(request: Request):
     return RedirectResponse("/library", status_code=303)

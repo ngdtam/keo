@@ -13,7 +13,7 @@
 <div class="card">
   <ul class="list-group list-group-flush" id="review-list">
   {% for row in rows %}
-    <li class="list-group-item">
+    <li class="list-group-item" data-video-id="{{ row.video_id }}">
       <div class="row align-items-center">
         <div class="col">
           <div class="mb-1">
@@ -22,16 +22,34 @@
           </div>
           <div class="fw-bold">{{ row.heard_title }}</div>
           <div>{{ row.heard_artist }}</div>
-          {% if row.spotify_url %}
+          {% if row.reason == 'pending' %}
+          <div class="text-secondary">
+            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+            Searching on Spotify…
+          </div>
+          {% elif row.spotify_url %}
           <div class="text-secondary">Spotify match: {{ row.candidate_title }} — {{ row.candidate_artist }}</div>
           {% else %}
           <div class="text-secondary">No Spotify match found.</div>
           {% endif %}
         </div>
         <div class="col-auto d-flex gap-2">
-          <button type="button" class="btn" data-post="/api/review/{{ row.video_id | urlencode }}/download">
-            {% if row.spotify_url %}Download{% else %}Look up again{% endif %}
+          {% if row.reason == 'pending' %}
+          <button type="button" class="btn" disabled>
+            Searching…
           </button>
+          {% elif row.spotify_url %}
+          <button type="button" class="btn" data-post="/api/review/{{ row.video_id | urlencode }}/download">
+            Download
+          </button>
+          {% else %}
+          <button type="button" class="btn btn-outline-primary" data-post="/api/review/{{ row.video_id | urlencode }}/download-youtube">
+            Download from YouTube
+          </button>
+          <button type="button" class="btn" data-post="/api/review/{{ row.video_id | urlencode }}/download">
+            Look up again
+          </button>
+          {% endif %}
           <button type="button" class="btn btn-outline-secondary" data-dismiss="/api/review/{{ row.video_id | urlencode }}/dismiss">
             Dismiss
           </button>

@@ -76,9 +76,67 @@ document.addEventListener("click", async (event) => {
   }
 });
 
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str || "";
+  return div.innerHTML;
+}
+
+async function updateReviewList(container) {
+  try {
+    const res = await fetch("/api/review", { credentials: "same-origin" });
+    if (!res.ok) return;
+    const items = await res.json();
+    const jsonStr = JSON.stringify(items);
+    if (container.dataset.lastJson === jsonStr) return;
+    container.dataset.lastJson = jsonStr;
+    if (!items || items.length === 0) {
+      container.innerHTML = '<li class="list-group-item" id="empty-review">Nothing to review.</li>';
+      return;
+    }
+    const html = items.map((row) => {
+      let matchHtml = "";
+      let actionButtons = "";
+      if (row.reason === "pending") {
+        matchHtml = '<div class="text-secondary"><span class="spinner-border spinner-border-sm me-1" role="status"></span>Searching on Spotify…</div>';
+        actionButtons = '<button type="button" class="btn" disabled>Searching…</button>';
+      } else if (row.spotify_url) {
+        matchHtml = `<div class="text-secondary">Spotify match: ${escapeHtml(row.candidate_title)} — ${escapeHtml(row.candidate_artist)}</div>`;
+        actionButtons = `<button type="button" class="btn" data-post="/api/review/${encodeURIComponent(row.video_id)}/download">Download</button>`;
+      } else {
+        matchHtml = '<div class="text-secondary">No Spotify match found.</div>';
+        actionButtons = `<button type="button" class="btn btn-outline-primary" data-post="/api/review/${encodeURIComponent(row.video_id)}/download-youtube">Download from YouTube</button>
+<button type="button" class="btn" data-post="/api/review/${encodeURIComponent(row.video_id)}/download">Look up again</button>`;
+      }
+      return `
+    <li class="list-group-item" data-video-id="${escapeHtml(row.video_id)}">
+      <div class="row align-items-center">
+        <div class="col">
+          <div class="mb-1">
+            <span class="status-dot bg-red me-1"></span>
+            <span class="text-secondary small">Not in library</span>
+          </div>
+          <div class="fw-bold">${escapeHtml(row.heard_title)}</div>
+          <div>${escapeHtml(row.heard_artist)}</div>
+          ${matchHtml}
+        </div>
+        <div class="col-auto d-flex gap-2">
+          ${actionButtons}
+          <button type="button" class="btn btn-outline-secondary" data-dismiss="/api/review/${encodeURIComponent(row.video_id)}/dismiss">
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </li>`;
+    }).join("");
+    container.innerHTML = html;
+  } catch {}
+}
+
 function pollHistoryStatus(button) {
   button.disabled = true;
-  const timer = setInterval(async () => {
+  const reviewList = document.getElementById("review-list");
+  const tick = async () => {
     try {
       const res = await fetch("/api/history/status", { credentials: "same-origin" });
       if (!res.ok) return;
@@ -91,13 +149,19 @@ function pollHistoryStatus(button) {
         clearInterval(timer);
         button.textContent = "Complete!";
         setTimeout(() => window.location.reload(), 500);
+        return;
+      }
+      if (reviewList) {
+        updateReviewList(reviewList);
       }
     } catch {
       clearInterval(timer);
       button.textContent = "Check history now";
       button.disabled = false;
     }
-  }, 1500);
+  };
+  const timer = setInterval(tick, 1500);
+  tick();
 }
 
 const checkHistoryBtn = document.querySelector('button[data-post="/api/history/pull"]');

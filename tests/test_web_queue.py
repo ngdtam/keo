@@ -300,3 +300,35 @@ def test_review_page_renders_dismiss_button_and_status(logged_in, library):
     assert "Dismiss" in response.text
     assert "Not in library" in response.text
     assert "status-dot bg-red" in response.text
+
+
+def test_review_page_renders_pending_status(logged_in, library):
+    library.add_review("vid_pending", "Low G", "Simp Gái 808", reason="pending")
+    response = logged_in.get("/review")
+    assert response.status_code == 200
+    assert "Searching on Spotify…" in response.text
+    assert "Searching…" in response.text
+
+
+def test_review_page_renders_download_youtube_for_no_metadata(logged_in, library):
+    library.add_review("vid_nometa", "Kidsai", "TALAGI", reason="no_metadata")
+    response = logged_in.get("/review")
+    assert response.status_code == 200
+    assert "Download from YouTube" in response.text
+    assert 'data-post="/api/review/vid_nometa/download-youtube"' in response.text
+
+
+def test_review_download_youtube_enqueues_job(client, auth, library):
+    library.add_review("vid_yt1", "Artist", "Song", reason="no_metadata")
+    res = client.post("/api/review/vid_yt1/download-youtube", headers=auth)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["owned"] is False
+    assert data["job"]["source"] == "youtube"
+    assert data["job"]["video_id"] == "vid_yt1"
+
+
+def test_review_download_youtube_404_when_not_in_review(client, auth):
+    res = client.post("/api/review/nonexistent/download-youtube", headers=auth)
+    assert res.status_code == 404
+
