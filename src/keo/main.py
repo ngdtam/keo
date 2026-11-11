@@ -63,6 +63,7 @@ def build_app() -> FastAPI:
         cookies=cookies,
         timezone=settings.history_timezone,
         hour=settings.history_hour,
+        progress=services.history_progress,
     )
 
     @asynccontextmanager

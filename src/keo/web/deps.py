@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 
 from keo.catalog import Catalog
 from keo.cookies import CookieGate
+from keo.history import HistoryProgress
 from keo.jobs import Worker
 from keo.library import Library
 from keo.records import SongRow
@@ -42,6 +43,7 @@ class Services:
     timezone: str = "Asia/Ho_Chi_Minh"
     data_dir: Path | None = None
     music_dir: Path | None = None
+    history_progress: HistoryProgress = field(default_factory=HistoryProgress)
 
 
 class LoginRequired(Exception):

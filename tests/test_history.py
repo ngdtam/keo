@@ -66,6 +66,43 @@ def test_run_pull_logs_activity(catalog, library, worker, spotdl, caplog):
     assert "History pull completed" in caplog.text
 
 
+def test_history_progress_transitions():
+    from keo.history import HistoryProgress
+    prog = HistoryProgress()
+    assert prog.snapshot() == {"active": False, "stage": "idle", "current": 0, "total": 0, "percent": 0}
+    prog.start_fetching()
+    assert prog.snapshot() == {"active": True, "stage": "fetching", "current": 0, "total": 0, "percent": 0}
+    prog.start_processing(2)
+    assert prog.snapshot() == {"active": True, "stage": "processing", "current": 0, "total": 2, "percent": 0}
+    prog.step()
+    assert prog.snapshot() == {"active": True, "stage": "processing", "current": 1, "total": 2, "percent": 50}
+    prog.finish()
+    assert prog.snapshot()["active"] is False
+
+
+def test_run_pull_updates_progress(catalog, library, worker, spotdl):
+    from keo.history import HistoryProgress
+    prog = HistoryProgress()
+    snapshots = []
+    orig_step = prog.step
+    def observe_step():
+        snapshots.append(prog.snapshot())
+        orig_step()
+    prog.step = observe_step
+
+    catalog.history_items = [
+        HistoryItem("vid1", "Sơn Tùng M-TP", "Lạc Trôi", "Yesterday"),
+    ]
+    run_pull(
+        catalog=catalog, library=library, worker=worker, spotdl=spotdl,
+        cookies=worker.cookies, now=NIGHT, progress=prog,
+    )
+    assert len(snapshots) == 1
+    assert snapshots[0]["current"] == 0
+    assert snapshots[0]["total"] == 1
+    assert prog.snapshot()["active"] is False
+
+
 def test_weak_match_goes_to_review(catalog, library, worker, spotdl):
     catalog.history_items = plays()
     spotdl.candidates[QUERY] = candidate(name="Một Bài Khác", artist="Ai Đó")

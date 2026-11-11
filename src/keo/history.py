@@ -25,6 +25,56 @@ PLAYS_TO_QUALIFY = 1
 CHECK_EVERY_SECONDS = 60
 
 
+class HistoryProgress:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.active: bool = False
+        self.stage: str = "idle"
+        self.total: int = 0
+        self.current: int = 0
+
+    @property
+    def percent(self) -> int:
+        with self._lock:
+            if not self.active or self.total <= 0:
+                return 0
+            return min(100, int((self.current / self.total) * 100))
+
+    def start_fetching(self) -> None:
+        with self._lock:
+            self.active = True
+            self.stage = "fetching"
+            self.total = 0
+            self.current = 0
+
+    def start_processing(self, total: int) -> None:
+        with self._lock:
+            self.active = True
+            self.stage = "processing"
+            self.total = total
+            self.current = 0
+
+    def step(self) -> None:
+        with self._lock:
+            self.current += 1
+
+    def finish(self) -> None:
+        with self._lock:
+            self.active = False
+            self.stage = "idle"
+
+    def snapshot(self) -> dict[str, object]:
+        with self._lock:
+            pct = 0 if not self.active or self.total <= 0 else min(100, int((self.current / self.total) * 100))
+            return {
+                "active": self.active,
+                "stage": self.stage,
+                "current": self.current,
+                "total": self.total,
+                "percent": pct,
+            }
+
+
 def decide(
     video_id: str,
     artist: str,
@@ -75,47 +125,60 @@ def run_pull(
     spotdl: Spotdl,
     cookies: CookieGate,
     now: datetime,
+    progress: HistoryProgress | None = None,
 ) -> int | None:
+    if progress:
+        progress.start_fetching()
     started_at = now.isoformat(timespec="seconds")
     log.info("Starting history pull at %s", started_at)
     try:
-        items = catalog.history()
-    except CatalogError as exc:
-        log.warning("History pull failed: %s", exc)
-        library.record_pull(started_at, "failed", str(exc), [])
-        return None
-    pull_id = library.record_pull(started_at, "ok", None, items)
-    recent = library.count_recent(pull_id)
-    log.info(
-        "Fetched %d history items from YouTube Music (%d in recent shelves: Today, Yesterday, This week)",
-        len(items), len(recent),
-    )
-    added = 0
-    for heard in recent:
-        if heard.plays < PLAYS_TO_QUALIFY:
-            continue
-        if library.is_dismissed(heard.video_id):
-            log.info("Skipping '%s - %s' (%s): dismissed", heard.artist, heard.title, heard.video_id)
-            continue
-        if library.is_owned(heard.video_id, heard.artist, heard.title):
-            log.info("Skipping '%s - %s' (%s): already in library", heard.artist, heard.title, heard.video_id)
-            continue
-        if library.active_job(heard.video_id) is not None:
-            log.info("Skipping '%s - %s' (%s): download already active", heard.artist, heard.title, heard.video_id)
-            continue
         try:
-            log.info("Looking up '%s - %s' (%s) on Spotify...", heard.artist, heard.title, heard.video_id)
-            outcome = decide(
-                heard.video_id, heard.artist, heard.title,
-                library=library, worker=worker, spotdl=spotdl, cookies=cookies,
-            )
-            log.info("Decision for '%s - %s' (%s): %s", heard.artist, heard.title, heard.video_id, outcome)
-            if outcome == "review":
-                added += 1
-        except Exception:
-            log.exception("History decision failed for %s", heard.video_id)
-    log.info("History pull completed: %d new item(s) added to review", added)
-    return pull_id
+            items = catalog.history()
+        except CatalogError as exc:
+            log.warning("History pull failed: %s", exc)
+            library.record_pull(started_at, "failed", str(exc), [])
+            return None
+        pull_id = library.record_pull(started_at, "ok", None, items)
+        recent = library.count_recent(pull_id)
+        if progress:
+            progress.start_processing(len(recent))
+        log.info(
+            "Fetched %d history items from YouTube Music (%d in recent shelves: Today, Yesterday, This week)",
+            len(items), len(recent),
+        )
+        added = 0
+        for heard in recent:
+            try:
+                if heard.plays < PLAYS_TO_QUALIFY:
+                    continue
+                if library.is_dismissed(heard.video_id):
+                    log.info("Skipping '%s - %s' (%s): dismissed", heard.artist, heard.title, heard.video_id)
+                    continue
+                if library.is_owned(heard.video_id, heard.artist, heard.title):
+                    log.info("Skipping '%s - %s' (%s): already in library", heard.artist, heard.title, heard.video_id)
+                    continue
+                if library.active_job(heard.video_id) is not None:
+                    log.info("Skipping '%s - %s' (%s): download already active", heard.artist, heard.title, heard.video_id)
+                    continue
+                try:
+                    log.info("Looking up '%s - %s' (%s) on Spotify...", heard.artist, heard.title, heard.video_id)
+                    outcome = decide(
+                        heard.video_id, heard.artist, heard.title,
+                        library=library, worker=worker, spotdl=spotdl, cookies=cookies,
+                    )
+                    log.info("Decision for '%s - %s' (%s): %s", heard.artist, heard.title, heard.video_id, outcome)
+                    if outcome == "review":
+                        added += 1
+                except Exception:
+                    log.exception("History decision failed for %s", heard.video_id)
+            finally:
+                if progress:
+                    progress.step()
+        log.info("History pull completed: %d new item(s) added to review", added)
+        return pull_id
+    finally:
+        if progress:
+            progress.finish()
 
 
 def is_due(now: datetime, hour: int, library: Library, last_attempt: date | None) -> bool:
@@ -139,6 +202,7 @@ class Scheduler:
         timezone: str,
         hour: int,
         clock: Callable[[], datetime] | None = None,
+        progress: HistoryProgress | None = None,
     ) -> None:
         zone = ZoneInfo(timezone)
         self._catalog = catalog
@@ -148,6 +212,7 @@ class Scheduler:
         self._cookies = cookies
         self._hour = hour
         self._clock = clock or (lambda: datetime.now(zone))
+        self._progress = progress
         self._last_attempt: date | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -160,6 +225,7 @@ class Scheduler:
         run_pull(
             catalog=self._catalog, library=self._library,
             worker=self._worker, spotdl=self._spotdl, cookies=self._cookies, now=now,
+            progress=self._progress,
         )
         return True
 

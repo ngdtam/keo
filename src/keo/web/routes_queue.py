@@ -84,6 +84,7 @@ def api_history_pull(request: Request):
             spotdl=services.spotdl,
             cookies=services.cookies,
             now=now,
+            progress=services.history_progress,
         )
     )
     return JSONResponse({"status": "checking"}, status_code=202)
