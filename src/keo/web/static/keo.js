@@ -97,7 +97,7 @@ function pollHistoryStatus(button) {
       button.textContent = "Check history now";
       button.disabled = false;
     }
-  }, 800);
+  }, 1500);
 }
 
 const checkHistoryBtn = document.querySelector('button[data-post="/api/history/pull"]');
