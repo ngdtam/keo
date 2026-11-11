@@ -19,6 +19,30 @@ document.addEventListener("click", async (event) => {
 });
 
 document.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-dismiss]");
+  if (!button) return;
+  button.disabled = true;
+  try {
+    const response = await fetch(button.dataset.dismiss, {
+      method: "POST",
+      credentials: "same-origin",
+    });
+    if (response.ok) {
+      const item = button.closest(".list-group-item");
+      const list = item?.parentElement;
+      if (item) item.remove();
+      if (list && list.querySelectorAll(".list-group-item").length === 0) {
+        list.innerHTML = '<li class="list-group-item" id="empty-review">Nothing to review.</li>';
+      }
+    } else {
+      button.disabled = false;
+    }
+  } catch {
+    button.disabled = false;
+  }
+});
+
+document.addEventListener("click", async (event) => {
   const button = event.target.closest("button[data-library-download]");
   if (!button) return;
   button.disabled = true;

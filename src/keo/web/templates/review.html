@@ -9,13 +9,17 @@
     <button type="button" class="btn" data-post="/api/history/pull">Check history now</button>
   </div>
 </div>
-<p class="text-secondary">Songs you played today whose Spotify match was not close enough to download on their own.</p>
+<p class="text-secondary">Songs you played today waiting for your decision.</p>
 <div class="card">
-  <ul class="list-group list-group-flush">
+  <ul class="list-group list-group-flush" id="review-list">
   {% for row in rows %}
     <li class="list-group-item">
       <div class="row align-items-center">
         <div class="col">
+          <div class="mb-1">
+            <span class="status-dot bg-red me-1"></span>
+            <span class="text-secondary small">Not in library</span>
+          </div>
           <div class="fw-bold">{{ row.heard_title }}</div>
           <div>{{ row.heard_artist }}</div>
           {% if row.spotify_url %}
@@ -24,15 +28,18 @@
           <div class="text-secondary">No Spotify match found.</div>
           {% endif %}
         </div>
-        <div class="col-auto">
+        <div class="col-auto d-flex gap-2">
           <button type="button" class="btn" data-post="/api/review/{{ row.video_id | urlencode }}/download">
             {% if row.spotify_url %}Download{% else %}Look up again{% endif %}
+          </button>
+          <button type="button" class="btn btn-outline-secondary" data-dismiss="/api/review/{{ row.video_id | urlencode }}/dismiss">
+            Dismiss
           </button>
         </div>
       </div>
     </li>
   {% else %}
-    <li class="list-group-item">Nothing to review.</li>
+    <li class="list-group-item" id="empty-review">Nothing to review.</li>
   {% endfor %}
   </ul>
 </div>

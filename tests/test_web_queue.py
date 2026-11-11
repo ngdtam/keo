@@ -261,3 +261,13 @@ def test_dismiss_review_removes_item_and_marks_dismissed(client, auth, library):
     assert response.json() == {"status": "dismissed"}
     assert library.get_review("vid1") is None
     assert library.is_dismissed("vid1")
+
+
+def test_review_page_renders_dismiss_button_and_status(logged_in, library):
+    library.add_review("vid1", "Sơn Tùng M-TP", "Lạc Trôi", reason="close_match", spotify_url=URL)
+    response = logged_in.get("/review")
+    assert response.status_code == 200
+    assert 'data-dismiss="/api/review/vid1/dismiss"' in response.text
+    assert "Dismiss" in response.text
+    assert "Not in library" in response.text
+    assert "status-dot bg-red" in response.text
