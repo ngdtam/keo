@@ -38,10 +38,32 @@ def test_single_play_today_qualifies_for_lookup(catalog, library, worker, spotdl
     assert library.get_review("vid1") is not None
 
 
-def test_plays_from_other_days_do_not_count(catalog, library, worker, spotdl):
-    catalog.history_items = plays(count=5, label="Yesterday")
+def test_plays_from_older_shelves_do_not_count(catalog, library, worker, spotdl):
+    catalog.history_items = plays(count=5, label="Last week")
     pull(catalog, library, worker, spotdl)
     assert spotdl.lookups == []
+
+
+def test_plays_from_yesterday_and_this_week_qualify(catalog, library, worker, spotdl):
+    catalog.history_items = [
+        HistoryItem("vid1", "Sơn Tùng M-TP", "Lạc Trôi", "Yesterday"),
+        HistoryItem("vid2", "Đen Vâu", "Trốn Tìm", "This week"),
+    ]
+    pull(catalog, library, worker, spotdl)
+    assert spotdl.lookups == ["Sơn Tùng M-TP - Lạc Trôi", "Đen Vâu - Trốn Tìm"]
+
+
+def test_run_pull_logs_activity(catalog, library, worker, spotdl, caplog):
+    import logging
+    caplog.set_level(logging.INFO)
+    catalog.history_items = [
+        HistoryItem("vid1", "Sơn Tùng M-TP", "Lạc Trôi", "Yesterday"),
+    ]
+    pull(catalog, library, worker, spotdl)
+    assert "Starting history pull" in caplog.text
+    assert "Fetched 1 history items" in caplog.text
+    assert "Looking up 'Sơn Tùng M-TP - Lạc Trôi' (vid1) on Spotify" in caplog.text
+    assert "History pull completed" in caplog.text
 
 
 def test_weak_match_goes_to_review(catalog, library, worker, spotdl):

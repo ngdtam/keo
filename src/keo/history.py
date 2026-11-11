@@ -39,15 +39,21 @@ def decide(
 ) -> str:
     candidate = spotdl.lookup(f"{artist} - {title}").candidate
     if candidate is None:
+        log.info("No Spotify metadata found for '%s - %s' (%s) -> review (no_metadata)", artist, title, video_id)
         library.add_review(video_id, artist, title, reason="no_metadata", replace=replace_review)
         return "review"
     if library.is_owned_spotify(candidate.song_id):
+        log.info("Spotify candidate '%s - %s' (%s) already owned in library -> mark_owned", candidate.primary_artist, candidate.name, candidate.song_id)
         library.mark_owned(video_id, artist, title, candidate.song_id)
         return "owned"
     reason = (
         "close_match"
         if is_close(Name(artist, title), Name(candidate.primary_artist, candidate.name))
         else "weak_match"
+    )
+    log.info(
+        "Matched '%s - %s' (%s) -> '%s - %s' (%s) [%s] -> review",
+        artist, title, video_id, candidate.primary_artist, candidate.name, candidate.song_id, reason,
     )
     library.add_review(
         video_id, artist, title,
@@ -71,6 +77,7 @@ def run_pull(
     now: datetime,
 ) -> int | None:
     started_at = now.isoformat(timespec="seconds")
+    log.info("Starting history pull at %s", started_at)
     try:
         items = catalog.history()
     except CatalogError as exc:
@@ -78,22 +85,36 @@ def run_pull(
         library.record_pull(started_at, "failed", str(exc), [])
         return None
     pull_id = library.record_pull(started_at, "ok", None, items)
-    for heard in library.count_today(pull_id):
+    recent = library.count_recent(pull_id)
+    log.info(
+        "Fetched %d history items from YouTube Music (%d in recent shelves: Today, Yesterday, This week)",
+        len(items), len(recent),
+    )
+    added = 0
+    for heard in recent:
         if heard.plays < PLAYS_TO_QUALIFY:
             continue
         if library.is_dismissed(heard.video_id):
+            log.info("Skipping '%s - %s' (%s): dismissed", heard.artist, heard.title, heard.video_id)
             continue
         if library.is_owned(heard.video_id, heard.artist, heard.title):
+            log.info("Skipping '%s - %s' (%s): already in library", heard.artist, heard.title, heard.video_id)
             continue
         if library.active_job(heard.video_id) is not None:
+            log.info("Skipping '%s - %s' (%s): download already active", heard.artist, heard.title, heard.video_id)
             continue
         try:
-            decide(
+            log.info("Looking up '%s - %s' (%s) on Spotify...", heard.artist, heard.title, heard.video_id)
+            outcome = decide(
                 heard.video_id, heard.artist, heard.title,
                 library=library, worker=worker, spotdl=spotdl, cookies=cookies,
             )
+            log.info("Decision for '%s - %s' (%s): %s", heard.artist, heard.title, heard.video_id, outcome)
+            if outcome == "review":
+                added += 1
         except Exception:
             log.exception("History decision failed for %s", heard.video_id)
+    log.info("History pull completed: %d new item(s) added to review", added)
     return pull_id
 
 
