@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -14,6 +15,7 @@ from keo.history import decide, run_pull
 from keo.library import Job
 from keo.web.deps import TEMPLATES, get_services, require_api, require_download, require_page
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 PAGE = {"response_class": HTMLResponse, "dependencies": [Depends(require_page)]}
 API = {"dependencies": [Depends(require_api)]}
@@ -71,6 +73,7 @@ def api_review_dismiss(request: Request, video_id: str):
 
 @router.post("/api/history/pull", **API)
 def api_history_pull(request: Request):
+    log.info("Manual history pull requested via API")
     services = get_services(request)
     now = datetime.now(ZoneInfo(services.timezone))
     services.run_later(

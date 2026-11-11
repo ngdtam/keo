@@ -234,13 +234,16 @@ def test_history_pull_requires_token(client):
     assert client.post("/api/history/pull").status_code == 401
 
 
-def test_history_pull_triggers_background_pull(client, auth, catalog, library, worker, spotdl):
+def test_history_pull_triggers_background_pull(client, auth, catalog, library, worker, spotdl, caplog):
+    import logging
+    caplog.set_level(logging.INFO)
     catalog.history_items = [HistoryItem("vid1", "Sơn Tùng M-TP", "Lạc Trôi", "Today")]
     spotdl.candidates[QUERY] = candidate()
     response = client.post("/api/history/pull", headers=auth)
     assert response.status_code == 202
     assert response.json() == {"status": "checking"}
     assert library.get_review("vid1") is not None
+    assert "Manual history pull requested via API" in caplog.text
 
 
 def test_review_page_renders_check_history_button(logged_in):
