@@ -62,6 +62,13 @@ def api_review(request: Request):
     return [asdict(row) for row in get_services(request).library.list_review()]
 
 
+@router.post("/api/review/{video_id}/dismiss", **API)
+def api_review_dismiss(request: Request, video_id: str):
+    services = get_services(request)
+    services.library.dismiss(video_id)
+    return JSONResponse({"status": "dismissed"})
+
+
 @router.post("/api/history/pull", **API)
 def api_history_pull(request: Request):
     services = get_services(request)

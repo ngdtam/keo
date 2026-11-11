@@ -51,7 +51,9 @@ def test_no_metadata_review_tap_looks_up_again(client, auth, library, spotdl):
     response = client.post("/api/review/vid1/download", headers=auth)
     assert response.status_code == 202
     assert response.json() == {"status": "checking"}
-    assert library.active_job("vid1").source == "review"
+    row = library.get_review("vid1")
+    assert (row.reason, row.spotify_url) == ("close_match", URL)
+    assert library.active_job("vid1") is None
 
 
 def test_no_metadata_review_tap_with_a_weak_result_updates_the_row(client, auth, library, spotdl):
@@ -238,7 +240,7 @@ def test_history_pull_triggers_background_pull(client, auth, catalog, library, w
     response = client.post("/api/history/pull", headers=auth)
     assert response.status_code == 202
     assert response.json() == {"status": "checking"}
-    assert library.active_job("vid1") is not None
+    assert library.get_review("vid1") is not None
 
 
 def test_review_page_renders_check_history_button(logged_in):
@@ -246,3 +248,16 @@ def test_review_page_renders_check_history_button(logged_in):
     assert response.status_code == 200
     assert 'data-post="/api/history/pull"' in response.text
     assert "Check history now" in response.text
+
+
+def test_dismiss_review_requires_token(client):
+    assert client.post("/api/review/vid1/dismiss").status_code == 401
+
+
+def test_dismiss_review_removes_item_and_marks_dismissed(client, auth, library):
+    library.add_review("vid1", "Artist", "Title", reason="weak_match")
+    response = client.post("/api/review/vid1/dismiss", headers=auth)
+    assert response.status_code == 200
+    assert response.json() == {"status": "dismissed"}
+    assert library.get_review("vid1") is None
+    assert library.is_dismissed("vid1")
