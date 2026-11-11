@@ -27,11 +27,13 @@ def test_two_jobs_are_one_library_song(logged_in, library):
     assert "OSAD" in song.text
 
 
-def test_job_without_spotify_has_no_delete_button(logged_in, library):
+def test_job_without_spotify_has_delete_buttons(logged_in, library):
     library.enqueue("vid1", "Đen", "No Match", source="manual")
     page = logged_in.get("/library/video/vid1")
     assert page.status_code == 200
-    assert "Delete" not in page.text
+    assert "Remove file" in page.text
+    assert "Remove from library" in page.text
+    assert 'action="/library/video/vid1/delete"' in page.text
 
 
 def test_unique_title_file_is_saved(logged_in, library, tmp_path):
@@ -473,3 +475,78 @@ def test_song_page_shows_the_cover_and_no_download(logged_in, library, tmp_path,
 def test_library_nav_item_is_active(logged_in):
     text = logged_in.get("/library").text
     assert 'class="nav-link active" href="/library"' in text
+
+
+def test_video_song_shows_cover_on_disk_and_no_download(logged_in, library, tmp_path, monkeypatch):
+    library.mark_owned("vid_yt", "Đen", "Lối Nhỏ", None)
+    job = library.enqueue("vid_yt", "Đen", "Lối Nhỏ", source="youtube")
+    library.finish(job.id, ok=True)
+    audio = tmp_path / "music" / "Đen - Lối Nhỏ.opus"
+    audio.write_bytes(b"song")
+    library.set_audio_path("vid_yt", str(audio))
+    monkeypatch.setattr(
+        "keo.web.routes_library.cover_bytes", lambda path: (b"img", "image/jpeg"),
+    )
+    # Check library grid card
+    lib_text = logged_in.get("/library").text
+    assert 'src="/library/video/vid_yt/cover"' in lib_text
+    assert "bg-green" in lib_text
+    assert 'data-library-download="/api/library/video/vid_yt/download"' not in lib_text
+
+    # Check song page
+    song_text = logged_in.get("/library/video/vid_yt").text
+    assert 'src="/library/video/vid_yt/cover"' in song_text
+    assert "On disk" in song_text
+    assert "Remove file" in song_text
+    assert "Remove from library" in song_text
+    assert 'action="/library/video/vid_yt/delete"' in song_text
+
+
+def test_video_song_cover_serves_image_bytes(logged_in, library, tmp_path, monkeypatch):
+    library.mark_owned("vid_yt", "Đen", "Lối Nhỏ", None)
+    job = library.enqueue("vid_yt", "Đen", "Lối Nhỏ", source="youtube")
+    library.finish(job.id, ok=True)
+    audio = tmp_path / "music" / "Đen - Lối Nhỏ.opus"
+    audio.write_bytes(b"song")
+    library.set_audio_path("vid_yt", str(audio))
+    monkeypatch.setattr(
+        "keo.web.routes_library.cover_bytes", lambda path: (b"jpeg_data", "image/jpeg"),
+    )
+    resp = logged_in.get("/library/video/vid_yt/cover")
+    assert resp.status_code == 200
+    assert resp.content == b"jpeg_data"
+    assert resp.headers["content-type"] == "image/jpeg"
+
+
+def test_delete_video_song_scope_file(logged_in, library, tmp_path):
+    library.mark_owned("vid_yt", "Đen", "Lối Nhỏ", None)
+    job = library.enqueue("vid_yt", "Đen", "Lối Nhỏ", source="youtube")
+    library.finish(job.id, ok=True)
+    audio = tmp_path / "music" / "Đen - Lối Nhỏ.opus"
+    audio.write_bytes(b"song")
+    audio.with_suffix(".lrc").write_text("lyrics", encoding="utf-8")
+    library.set_audio_path("vid_yt", str(audio))
+
+    resp = logged_in.post("/library/video/vid_yt/delete", data={"scope": "file"}, follow_redirects=False)
+    assert resp.status_code == 303
+    assert not audio.exists()
+    assert not audio.with_suffix(".lrc").exists()
+    assert library.get_job(job.id) is not None
+    assert "Missing" in logged_in.get("/library").text
+
+
+def test_delete_video_song_scope_library(logged_in, library, tmp_path):
+    library.mark_owned("vid_yt", "Đen", "Lối Nhỏ", None)
+    job = library.enqueue("vid_yt", "Đen", "Lối Nhỏ", source="youtube")
+    library.finish(job.id, ok=True)
+    audio = tmp_path / "music" / "Đen - Lối Nhỏ.opus"
+    audio.write_bytes(b"song")
+    audio.with_suffix(".lrc").write_text("lyrics", encoding="utf-8")
+    library.set_audio_path("vid_yt", str(audio))
+
+    resp = logged_in.post("/library/video/vid_yt/delete", data={"scope": "library"}, follow_redirects=False)
+    assert resp.status_code == 303
+    assert not audio.exists()
+    assert not audio.with_suffix(".lrc").exists()
+    assert library.get_job(job.id) is None
+    assert "Lối Nhỏ" not in logged_in.get("/library").text

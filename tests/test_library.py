@@ -17,9 +17,9 @@ def test_owned_by_normalized_name(library):
     assert not library.is_owned("vid3", "Sơn Tùng M-TP", "Chúng Ta Của Hiện Tại")
 
 
-def test_owned_by_succeeded_job(library):
-    job = library.enqueue("vid_job", "Artist", "Title", source="manual")
-    library.finish(job.id, ok=True)
+def test_owned_by_job_linked_to_spotify_song(library):
+    library.mark_owned("vid_sp", "Artist", "Title", "sp1")
+    job = library.enqueue("vid_job", "Artist", "Title", source="manual", spotify_id="sp1")
     assert library.is_owned("vid_job", "Different", "Other")
 
 

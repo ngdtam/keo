@@ -48,45 +48,45 @@ def _groups(jobs: list[Job]) -> list[tuple[tuple[str, str], list[Job]]]:
     return [(key, grouped[key]) for key in order]
 
 
-def _titles(services, spotify_id: str, jobs: list[Job]) -> set[str]:
+def _titles(services, ident: str, jobs: list[Job]) -> set[str]:
     titles = {job.title for job in jobs if job.title}
-    stored = services.library.song_title(spotify_id)
+    stored = services.library.song_title(ident)
     if stored:
         titles.add(stored)
     return titles
 
 
-def _known_file(services, spotify_id: str, jobs: list[Job]) -> Path | None:
+def _known_file(services, ident: str, jobs: list[Job]) -> Path | None:
     music = services.music_dir
-    raw = services.library.audio_path(spotify_id)
+    raw = services.library.audio_path(ident)
     if raw:
         path = Path(raw)
         if music is not None and inside_music(music, path) and path.is_file():
             return path
         return None
-    if music is None or not services.library.has_spotify(spotify_id):
+    if music is None or not (services.library.has_spotify(ident) or services.library.has_song(ident)):
         return None
-    match = unique_title_file(music, _titles(services, spotify_id, jobs))
+    match = unique_title_file(music, _titles(services, ident, jobs))
     if match is None:
         return None
-    services.library.set_audio_path(spotify_id, str(match))
+    services.library.set_audio_path(ident, str(match))
     return match
 
 
 def _row(services, key: tuple[str, str], jobs: list[Job]) -> SimpleNamespace:
     kind, ident = key
     newest = jobs[0]
-    path = _known_file(services, ident, jobs) if kind == "spotify" else None
+    path = _known_file(services, ident, jobs)
     color, label = _indicator(_live(jobs), path)
     href = f"/library/spotify/{ident}" if kind == "spotify" else f"/library/video/{ident}"
     cover = ""
-    if kind == "spotify" and path and cover_bytes(path):
-        cover = f"/library/spotify/{ident}/cover"
+    if path and cover_bytes(path):
+        cover = f"/library/{kind}/{ident}/cover"
     heard = load(path) if path is not None and path.is_file() else None
     return SimpleNamespace(
         href=href, color=color, label=label, artist=newest.artist, title=newest.title,
         path=str(path) if path else "", size=path.stat().st_size if path else None,
-        can_delete=kind == "spotify", ident=ident, cover=cover,
+        can_delete=True, ident=ident, cover=cover, kind=kind,
         quality=heard.card if heard and heard.card else "",
         details=heard.rows if heard else (),
     )
@@ -138,13 +138,18 @@ def cover_bytes(path: Path) -> tuple[bytes, str] | None:
     return None
 
 
-@router.get("/library/spotify/{spotify_id}/cover", **PAGE)
-def song_cover(request: Request, spotify_id: str):
+@router.get("/library/{kind}/{ident}/cover", **PAGE)
+def song_cover(request: Request, kind: str, ident: str):
+    if kind not in ("spotify", "video"):
+        raise HTTPException(status_code=404, detail="Not found")
     services = get_services(request)
-    jobs = [job for job in services.library.list_jobs() if job.spotify_id == spotify_id]
+    jobs = [
+        job for job in services.library.list_jobs()
+        if (job.spotify_id == ident if kind == "spotify" else (job.spotify_id is None and job.video_id == ident))
+    ]
     if not jobs:
         raise HTTPException(status_code=404, detail="Unknown song")
-    path = _known_file(services, spotify_id, jobs)
+    path = _known_file(services, ident, jobs)
     found = cover_bytes(path) if path else None
     if found is None:
         raise HTTPException(status_code=404, detail="No cover")
@@ -186,14 +191,19 @@ def video_song(request: Request, video_id: str):
     )
 
 
-@router.post("/library/spotify/{spotify_id}/delete", **PAGE)
-def delete_song(request: Request, spotify_id: str, scope: Annotated[str, Form()] = ""):
+@router.post("/library/{kind}/{ident}/delete", **PAGE)
+def delete_song(request: Request, kind: str, ident: str, scope: Annotated[str, Form()] = ""):
+    if kind not in ("spotify", "video"):
+        raise HTTPException(status_code=404, detail="Not found")
     services = get_services(request)
-    jobs = [job for job in services.library.list_jobs() if job.spotify_id == spotify_id]
+    jobs = [
+        job for job in services.library.list_jobs()
+        if (job.spotify_id == ident if kind == "spotify" else (job.spotify_id is None and job.video_id == ident))
+    ]
     if not jobs:
         raise HTTPException(status_code=404, detail="Unknown song")
     if scope == "library" and any(job.status in {"queued", "running"} for job in jobs):
-        row = _row(services, ("spotify", spotify_id), jobs)
+        row = _row(services, (kind, ident), jobs)
         return TEMPLATES.TemplateResponse(
             request,
             "song.html",
@@ -205,10 +215,10 @@ def delete_song(request: Request, spotify_id: str, scope: Annotated[str, Form()]
             status_code=409,
         )
     music = services.music_dir
-    raw = services.library.audio_path(spotify_id)
+    raw = services.library.audio_path(ident)
     path = Path(raw) if raw else None
-    if path is None and music is not None and services.library.has_spotify(spotify_id):
-        path = unique_title_file(music, _titles(services, spotify_id, jobs))
+    if path is None and music is not None and (services.library.has_spotify(ident) or services.library.has_song(ident)):
+        path = unique_title_file(music, _titles(services, ident, jobs))
     if path is not None and (music is None or not inside_music(music, path)):
         raise HTTPException(status_code=400, detail="Path is outside the music folder")
     if path is not None and path.is_file():
@@ -216,9 +226,14 @@ def delete_song(request: Request, spotify_id: str, scope: Annotated[str, Form()]
         lyrics = path.with_suffix(".lrc")
         if lyrics.is_file() and music is not None and inside_music(music, lyrics):
             lyrics.unlink()
-    services.library.forget_spotify(spotify_id)
-    if scope == "library":
-        services.library.drop_spotify_jobs(spotify_id)
+    if kind == "spotify":
+        services.library.forget_spotify(ident)
+        if scope == "library":
+            services.library.drop_spotify_jobs(ident)
+    else:
+        services.library.forget_video(ident)
+        if scope == "library":
+            services.library.drop_video_jobs(ident)
     return RedirectResponse("/library", status_code=303)
 
 
@@ -228,7 +243,7 @@ def _redownload(services, kind: str, ident: str, jobs: list[Job]):
     live = next((job for job in jobs if job.status in {"queued", "running"}), None)
     if live is not None:
         return queued(live)
-    path = _known_file(services, ident, jobs) if kind == "spotify" else None
+    path = _known_file(services, ident, jobs)
     if path is not None:
         raise HTTPException(status_code=409, detail="The file is already on disk.")
     require_download(services)

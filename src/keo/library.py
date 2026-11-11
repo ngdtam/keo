@@ -284,10 +284,14 @@ class Library:
         norm_title = normalize(title)
         norm_artist = normalize(artist)
         with self._lock:
-            # 1. Match video_id in songs or succeeded jobs
+            # 1. Match video_id in songs or jobs linked to an existing song
             if self._db.execute("SELECT 1 FROM songs WHERE video_id = ?", (video_id,)).fetchone() is not None:
                 return True
-            if self._db.execute("SELECT 1 FROM jobs WHERE video_id = ? AND status = 'succeeded'", (video_id,)).fetchone() is not None:
+            if self._db.execute(
+                "SELECT 1 FROM songs s JOIN jobs j ON (s.spotify_id = j.spotify_id)"
+                " WHERE j.video_id = ? AND j.spotify_id IS NOT NULL",
+                (video_id,),
+            ).fetchone() is not None:
                 return True
 
             # 2. Exact match on (artist_key, title_key)
@@ -320,6 +324,14 @@ class Library:
             ).fetchone()
         return row is not None
 
+    def has_song(self, identifier: str) -> bool:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT 1 FROM songs WHERE spotify_id = ? OR video_id = ?",
+                (identifier, identifier),
+            ).fetchone()
+        return row is not None
+
     def audio_path(self, identifier: str) -> str | None:
         with self._lock:
             row = self._db.execute(
@@ -330,10 +342,10 @@ class Library:
             return None
         return str(row["audio_path"])
 
-    def song_title(self, spotify_id: str) -> str | None:
+    def song_title(self, identifier: str) -> str | None:
         with self._lock:
             row = self._db.execute(
-                "SELECT title FROM songs WHERE spotify_id = ?", (spotify_id,)
+                "SELECT title FROM songs WHERE spotify_id = ? OR video_id = ?", (identifier, identifier)
             ).fetchone()
         return str(row["title"]) if row else None
 
@@ -356,6 +368,10 @@ class Library:
     def drop_spotify_jobs(self, spotify_id: str) -> None:
         with self._lock, self._db:
             self._db.execute("DELETE FROM jobs WHERE spotify_id = ?", (spotify_id,))
+
+    def drop_video_jobs(self, video_id: str) -> None:
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM jobs WHERE video_id = ? AND spotify_id IS NULL", (video_id,))
 
     def mark_owned(self, video_id: str, artist: str, title: str, spotify_id: str | None) -> None:
         norm_title = normalize(title)

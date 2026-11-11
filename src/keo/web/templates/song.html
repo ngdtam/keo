@@ -35,11 +35,11 @@
 {% endif %}
 {% if song.can_delete %}
 <div class="d-flex gap-2 mb-3">
-  <form method="post" action="/library/spotify/{{ song.ident }}/delete">
+  <form method="post" action="{{ song.href }}/delete">
     <input type="hidden" name="scope" value="file">
     <button class="btn">Remove file</button>
   </form>
-  <form method="post" action="/library/spotify/{{ song.ident }}/delete">
+  <form method="post" action="{{ song.href }}/delete">
     <input type="hidden" name="scope" value="library">
     <button class="btn">Remove from library</button>
   </form>
