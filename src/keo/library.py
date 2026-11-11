@@ -146,6 +146,9 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+RECENT_PLAYED_LABELS: tuple[str, ...] = ("Today", "Yesterday", "This week")
+
+
 class Library:
     def __init__(self, db_path: Path, archive_path: Path) -> None:
         self._archive_path = archive_path
@@ -493,15 +496,23 @@ class Library:
             ).fetchone()
         return row is not None
 
-    def count_today(self, pull_id: int) -> list[HeardCount]:
+    def count_recent(
+        self, pull_id: int, labels: tuple[str, ...] = RECENT_PLAYED_LABELS
+    ) -> list[HeardCount]:
+        if not labels:
+            return []
+        placeholders = ", ".join("?" for _ in labels)
         with self._lock:
             rows = self._db.execute(
-                "SELECT video_id, artist, title, COUNT(*) AS plays FROM history_items"
-                " WHERE pull_id = ? AND played_label = 'Today'"
-                " GROUP BY video_id ORDER BY MIN(id)",
-                (pull_id,),
+                f"SELECT video_id, artist, title, COUNT(*) AS plays FROM history_items"
+                f" WHERE pull_id = ? AND played_label IN ({placeholders})"
+                f" GROUP BY video_id ORDER BY MIN(id)",
+                (pull_id, *labels),
             ).fetchall()
         return [HeardCount(**dict(row)) for row in rows]
+
+    def count_today(self, pull_id: int) -> list[HeardCount]:
+        return self.count_recent(pull_id, labels=("Today",))
 
     # Helpers that expect the lock to be held
 

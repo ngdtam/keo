@@ -140,6 +140,21 @@ def test_count_today_counts_only_today(library):
     assert not library.has_ok_pull_on("2026-11-08")
 
 
+def test_count_recent_counts_today_yesterday_and_this_week(library):
+    items = [
+        HistoryItem("vid1", "A", "B", "Today"),
+        HistoryItem("vid2", "C", "D", "Yesterday"),
+        HistoryItem("vid3", "E", "F", "This week"),
+        HistoryItem("vid4", "G", "H", "Last week"),
+        HistoryItem("vid5", "I", "J", "May 2025"),
+    ]
+    pull_id = library.record_pull("2026-11-07T23:00:00+07:00", "ok", None, items)
+    counts = {count.video_id: count.plays for count in library.count_recent(pull_id)}
+    assert counts == {"vid1": 1, "vid2": 1, "vid3": 1}
+    assert "vid4" not in counts
+    assert "vid5" not in counts
+
+
 def test_failed_pull_is_not_an_ok_pull(library):
     library.record_pull("2026-11-07T23:00:00+07:00", "failed", "offline", [])
     assert not library.has_ok_pull_on("2026-11-07")
