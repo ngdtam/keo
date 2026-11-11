@@ -40,9 +40,23 @@ def cookies(probe):
     return CookieGate(probe=probe, clock=lambda: 0.0)
 
 
+import subprocess
+
 @pytest.fixture
-def worker(library, spotdl, cookies):
-    return Worker(library, spotdl, cookies=cookies)
+def fake_youtube_runner():
+    calls = []
+
+    def runner(args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="Downloaded", stderr="")
+
+    runner.calls = calls
+    return runner
+
+
+@pytest.fixture
+def worker(library, spotdl, cookies, fake_youtube_runner):
+    return Worker(library, spotdl, cookies=cookies, youtube_runner=fake_youtube_runner)
 
 
 @pytest.fixture

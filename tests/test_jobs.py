@@ -39,38 +39,32 @@ def test_finished_download_marks_the_song_owned(worker, library, spotdl):
     assert library.is_owned("vid1", "x", "y")
 
 
-def test_tap_downloads_the_top_match_even_when_names_differ(worker, library, spotdl):
+def test_weak_match_falls_back_to_youtube_download(worker, library, spotdl, fake_youtube_runner):
     spotdl.candidates[QUERY] = candidate(name="Different Song", artist="Other Artist")
     job = submit(worker)
     worker.run_once()
     assert library.get_job(job.id).status == "succeeded"
+    assert len(fake_youtube_runner.calls) == 1
+    assert library.is_owned("vid1", "Sơn Tùng M-TP", "Lạc Trôi")
 
 
-def test_failed_download_keeps_the_output_and_the_worker_moves_on(worker, library, spotdl):
-    spotdl.candidates[QUERY] = candidate()
-    spotdl.candidates["Đen - Bài Này Chill Phết"] = candidate(
-        name="Bài Này Chill Phết", artist="Đen", song_id="sp2"
-    )
-    spotdl.download_ok = False
-    failed = submit(worker)
-    other = worker.submit("vid2", "Đen", "Bài Này Chill Phết")
-    assert worker.run_once()
-    stored = library.get_job(failed.id)
-    assert (stored.status, stored.error) == ("failed", "fake download output")
-    assert not library.is_owned("vid1", "Sơn Tùng M-TP", "Lạc Trôi")
-    spotdl.download_ok = True
-    assert worker.run_once()
-    assert library.get_job(other.id).status == "succeeded"
-    assert not worker.run_once()
+def test_no_metadata_falls_back_to_youtube_download(worker, library, spotdl, fake_youtube_runner):
+    job = submit(worker)
+    worker.run_once()
+    stored = library.get_job(job.id)
+    assert stored.status == "succeeded"
+    assert len(fake_youtube_runner.calls) == 1
+    assert library.is_owned("vid1", "Sơn Tùng M-TP", "Lạc Trôi")
 
 
-def test_no_metadata_fails_the_job(worker, library, spotdl):
+def test_youtube_fallback_failure_marks_job_failed(worker, library, spotdl):
+    worker._youtube_runner = lambda args, **kwargs: subprocess.CompletedProcess(args, 1, stdout="", stderr="yt-dlp error")
     job = submit(worker)
     worker.run_once()
     stored = library.get_job(job.id)
     assert stored.status == "failed"
-    assert stored.error.startswith("No Spotify metadata")
-    assert spotdl.downloads == []
+    assert "yt-dlp error" in stored.error
+    assert not library.is_owned("vid1", "Sơn Tùng M-TP", "Lạc Trôi")
 
 
 def test_song_already_in_the_archive_is_not_downloaded_again(worker, library, spotdl, tmp_path):

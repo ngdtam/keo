@@ -9,6 +9,7 @@ from pathlib import Path
 from keo.config import cookie_ready
 from keo.cookies import CookieGate, settings_are_premium
 from keo.library import Job, Library, list_audio
+from keo.match import Name, is_close
 from keo.spotdl_cmd import Spotdl
 from keo.youtube_dl import Runner, download_youtube_audio
 
@@ -100,21 +101,28 @@ class Worker:
         if job.source == "youtube":
             self._process_youtube(job)
             return
+
         reason = self.cookies.allow(self._spotdl.settings)
         if reason is not None:
             self._library.finish(job.id, ok=False, error=reason)
             return
+
         url, spotify_id = job.spotify_url, job.spotify_id
         if url is None:
             lookup = self._spotdl.lookup(f"{job.artist} - {job.title}")
-            if lookup.candidate is None:
-                self._library.finish(
-                    job.id,
-                    ok=False,
-                    error=f"No Spotify metadata for {job.artist} - {job.title}\n{lookup.output}",
-                )
+            cand = lookup.candidate
+            if cand is None:
+                log.info("No Spotify metadata for '%s - %s' -> falling back to YouTube audio download", job.artist, job.title)
+                self._process_youtube(job)
                 return
-            url, spotify_id = lookup.candidate.url, lookup.candidate.song_id
+            if not is_close(Name(job.artist, job.title), Name(cand.primary_artist, cand.name)):
+                log.info(
+                    "Weak Spotify match for '%s - %s' -> candidate '%s - %s' -> falling back to YouTube audio download",
+                    job.artist, job.title, cand.primary_artist, cand.name,
+                )
+                self._process_youtube(job)
+                return
+            url, spotify_id = cand.url, cand.song_id
             self._library.set_candidate(job.id, url, spotify_id)
 
         if spotify_id and self._library.is_owned_spotify(spotify_id):
