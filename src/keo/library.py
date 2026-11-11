@@ -94,7 +94,11 @@ CREATE TABLE IF NOT EXISTS review (
     candidate_title TEXT,
     spotify_url TEXT,
     spotify_id TEXT,
-    reason TEXT NOT NULL CHECK (reason IN ('weak_match', 'no_metadata')),
+    reason TEXT NOT NULL CHECK (reason IN ('close_match', 'weak_match', 'no_metadata')),
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS dismissed (
+    video_id TEXT PRIMARY KEY,
     created_at TEXT NOT NULL
 );
 """
@@ -160,6 +164,41 @@ class Library:
             if "audio_path" not in song_columns:
                 self._db.execute("ALTER TABLE songs ADD COLUMN audio_path TEXT")
         self._accept_library_source()
+        self._accept_close_match_review()
+
+    def _accept_close_match_review(self) -> None:
+        row = self._db.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'review'"
+        ).fetchone()
+        if row is None or "'close_match'" in (row[0] or ""):
+            return
+        with self._db:
+            self._db.execute("DROP TABLE IF EXISTS review_next")
+            self._db.execute(
+                """
+                CREATE TABLE review_next (
+                    video_id TEXT PRIMARY KEY,
+                    heard_artist TEXT NOT NULL,
+                    heard_title TEXT NOT NULL,
+                    candidate_artist TEXT,
+                    candidate_title TEXT,
+                    spotify_url TEXT,
+                    spotify_id TEXT,
+                    reason TEXT NOT NULL CHECK (reason IN ('close_match', 'weak_match', 'no_metadata')),
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            self._db.execute(
+                """
+                INSERT INTO review_next
+                SELECT video_id, heard_artist, heard_title, candidate_artist, candidate_title,
+                       spotify_url, spotify_id, reason, created_at
+                FROM review
+                """
+            )
+            self._db.execute("DROP TABLE review")
+            self._db.execute("ALTER TABLE review_next RENAME TO review")
 
     def _accept_library_source(self) -> None:
         # SQLite cannot change a CHECK. Rebuild jobs so source may be 'library'.
@@ -407,6 +446,21 @@ class Library:
         with self._lock:
             rows = self._db.execute("SELECT * FROM review ORDER BY created_at").fetchall()
         return [ReviewRow(**dict(row)) for row in rows]
+
+    def dismiss(self, video_id: str) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT OR REPLACE INTO dismissed (video_id, created_at) VALUES (?, ?)",
+                (video_id, _now()),
+            )
+            self._db.execute("DELETE FROM review WHERE video_id = ?", (video_id,))
+
+    def is_dismissed(self, video_id: str) -> bool:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT 1 FROM dismissed WHERE video_id = ?", (video_id,)
+            ).fetchone()
+        return row is not None
 
     # History
 

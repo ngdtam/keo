@@ -143,3 +143,43 @@ def test_count_today_counts_only_today(library):
 def test_failed_pull_is_not_an_ok_pull(library):
     library.record_pull("2026-11-07T23:00:00+07:00", "failed", "offline", [])
     assert not library.has_ok_pull_on("2026-11-07")
+
+
+def test_dismiss_removes_from_review_and_persists(library):
+    library.add_review("vid1", "Artist", "Title", reason="weak_match")
+    assert library.get_review("vid1") is not None
+    assert not library.is_dismissed("vid1")
+
+    library.dismiss("vid1")
+    assert library.get_review("vid1") is None
+    assert library.is_dismissed("vid1")
+
+
+def test_add_review_supports_close_match_reason_and_migrates_old_table(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "keo.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE review (video_id TEXT PRIMARY KEY, heard_artist TEXT NOT NULL,"
+        " heard_title TEXT NOT NULL, candidate_artist TEXT, candidate_title TEXT,"
+        " spotify_url TEXT, spotify_id TEXT,"
+        " reason TEXT NOT NULL CHECK (reason IN ('weak_match', 'no_metadata')),"
+        " created_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO review VALUES ('vid1', 'A', 'B', NULL, NULL, NULL, NULL, 'no_metadata', '2026-11-10T00:00:00+00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    library = Library(db, tmp_path / "archive.txt")
+    assert library.get_review("vid1").reason == "no_metadata"
+    library.add_review(
+        "vid2", "Artist", "Title",
+        reason="close_match", candidate_artist="Artist", candidate_title="Title",
+        spotify_url="https://open.spotify.com/track/sp2", spotify_id="sp2",
+    )
+    row = library.get_review("vid2")
+    assert row.reason == "close_match"
+    assert row.candidate_title == "Title"
