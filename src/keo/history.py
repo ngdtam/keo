@@ -140,23 +140,29 @@ def run_pull(
             return None
         pull_id = library.record_pull(started_at, "ok", None, items)
         recent = library.count_recent(pull_id)
+        qualifying = []
+        for heard in recent:
+            if heard.plays < PLAYS_TO_QUALIFY:
+                continue
+            if library.is_owned(heard.video_id, heard.artist, heard.title):
+                log.info("Skipping '%s - %s' (%s): already in library", heard.artist, heard.title, heard.video_id)
+                continue
+            if library.active_job(heard.video_id) is not None:
+                log.info("Skipping '%s - %s' (%s): download already active", heard.artist, heard.title, heard.video_id)
+                continue
+            qualifying.append(heard)
+            if library.get_review(heard.video_id) is None:
+                library.add_review(heard.video_id, heard.artist, heard.title, reason="pending")
+
         if progress:
-            progress.start_processing(len(recent))
+            progress.start_processing(len(qualifying))
         log.info(
-            "Fetched %d history items from YouTube Music (%d in recent shelves: Today, Yesterday, This week)",
-            len(items), len(recent),
+            "Fetched %d history items from YouTube Music (%d qualifying in recent shelves: Today, Yesterday, This week)",
+            len(items), len(qualifying),
         )
         added = 0
-        for heard in recent:
+        for heard in qualifying:
             try:
-                if heard.plays < PLAYS_TO_QUALIFY:
-                    continue
-                if library.is_owned(heard.video_id, heard.artist, heard.title):
-                    log.info("Skipping '%s - %s' (%s): already in library", heard.artist, heard.title, heard.video_id)
-                    continue
-                if library.active_job(heard.video_id) is not None:
-                    log.info("Skipping '%s - %s' (%s): download already active", heard.artist, heard.title, heard.video_id)
-                    continue
                 try:
                     log.info("Looking up '%s - %s' (%s) on Spotify...", heard.artist, heard.title, heard.video_id)
                     outcome = decide(
@@ -168,6 +174,9 @@ def run_pull(
                         added += 1
                 except Exception:
                     log.exception("History decision failed for %s", heard.video_id)
+                    row = library.get_review(heard.video_id)
+                    if row and row.reason == "pending":
+                        library.dismiss(heard.video_id)
             finally:
                 if progress:
                     progress.step()

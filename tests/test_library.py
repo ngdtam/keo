@@ -198,3 +198,10 @@ def test_add_review_supports_close_match_reason_and_migrates_old_table(tmp_path)
     row = library.get_review("vid2")
     assert row.reason == "close_match"
     assert row.candidate_title == "Title"
+
+
+def test_add_review_supports_pending_reason(library):
+    library.add_review("vid_pending", "Artist", "Title", reason="pending")
+    row = library.get_review("vid_pending")
+    assert row is not None
+    assert row.reason == "pending"

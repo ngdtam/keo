@@ -38,6 +38,23 @@ def test_single_play_today_qualifies_for_lookup(catalog, library, worker, spotdl
     assert library.get_review("vid1") is not None
 
 
+def test_unowned_items_are_added_as_pending_before_lookup(catalog, library, worker, spotdl):
+    catalog.history_items = plays(count=1)
+    observed_reasons = []
+    orig_lookup = spotdl.lookup
+
+    def lookup_with_check(query):
+        row = library.get_review("vid1")
+        observed_reasons.append(row.reason if row else None)
+        return orig_lookup(query)
+
+    spotdl.lookup = lookup_with_check
+    spotdl.candidates[QUERY] = candidate(name="Lạc Trôi", artist="Sơn Tùng M-TP")
+    pull(catalog, library, worker, spotdl)
+    assert observed_reasons == ["pending"]
+    assert library.get_review("vid1").reason == "close_match"
+
+
 def test_plays_from_older_shelves_do_not_count(catalog, library, worker, spotdl):
     catalog.history_items = plays(count=5, label="Last week")
     pull(catalog, library, worker, spotdl)

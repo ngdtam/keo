@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS review (
     candidate_title TEXT,
     spotify_url TEXT,
     spotify_id TEXT,
-    reason TEXT NOT NULL CHECK (reason IN ('close_match', 'weak_match', 'no_metadata')),
+    reason TEXT NOT NULL CHECK (reason IN ('pending', 'close_match', 'weak_match', 'no_metadata')),
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS dismissed (
@@ -173,7 +173,7 @@ class Library:
         row = self._db.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'review'"
         ).fetchone()
-        if row is None or "'close_match'" in (row[0] or ""):
+        if row is None or ("'close_match'" in (row[0] or "") and "'pending'" in (row[0] or "")):
             return
         with self._db:
             self._db.execute("DROP TABLE IF EXISTS review_next")
@@ -187,7 +187,7 @@ class Library:
                     candidate_title TEXT,
                     spotify_url TEXT,
                     spotify_id TEXT,
-                    reason TEXT NOT NULL CHECK (reason IN ('close_match', 'weak_match', 'no_metadata')),
+                    reason TEXT NOT NULL CHECK (reason IN ('pending', 'close_match', 'weak_match', 'no_metadata')),
                     created_at TEXT NOT NULL
                 )
                 """
@@ -426,10 +426,13 @@ class Library:
         spotify_id: str | None = None,
         replace: bool = False,
     ) -> None:
-        verb = "INSERT OR REPLACE" if replace else "INSERT OR IGNORE"
         with self._lock, self._db:
+            if not replace:
+                existing = self._db.execute("SELECT reason FROM review WHERE video_id = ?", (video_id,)).fetchone()
+                if existing and existing[0] != "pending":
+                    return
             self._db.execute(
-                f"{verb} INTO review (video_id, heard_artist, heard_title, candidate_artist,"
+                "INSERT OR REPLACE INTO review (video_id, heard_artist, heard_title, candidate_artist,"
                 " candidate_title, spotify_url, spotify_id, reason, created_at)"
                 " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
