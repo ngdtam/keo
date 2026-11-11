@@ -160,14 +160,14 @@ def test_failed_pull_is_not_an_ok_pull(library):
     assert not library.has_ok_pull_on("2026-11-07")
 
 
-def test_dismiss_removes_from_review_and_persists(library):
+def test_dismiss_removes_from_review_and_does_not_blacklist(library):
     library.add_review("vid1", "Artist", "Title", reason="weak_match")
     assert library.get_review("vid1") is not None
     assert not library.is_dismissed("vid1")
 
     library.dismiss("vid1")
     assert library.get_review("vid1") is None
-    assert library.is_dismissed("vid1")
+    assert not library.is_dismissed("vid1")
 
 
 def test_add_review_supports_close_match_reason_and_migrates_old_table(tmp_path):

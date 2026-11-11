@@ -452,10 +452,6 @@ class Library:
 
     def dismiss(self, video_id: str) -> None:
         with self._lock, self._db:
-            self._db.execute(
-                "INSERT OR REPLACE INTO dismissed (video_id, created_at) VALUES (?, ?)",
-                (video_id, _now()),
-            )
             self._db.execute("DELETE FROM review WHERE video_id = ?", (video_id,))
 
     def is_dismissed(self, video_id: str) -> bool:

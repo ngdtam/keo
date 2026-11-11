@@ -284,13 +284,12 @@ def test_dismiss_review_requires_token(client):
     assert client.post("/api/review/vid1/dismiss").status_code == 401
 
 
-def test_dismiss_review_removes_item_and_marks_dismissed(client, auth, library):
+def test_dismiss_review_removes_item(client, auth, library):
     library.add_review("vid1", "Artist", "Title", reason="weak_match")
     response = client.post("/api/review/vid1/dismiss", headers=auth)
     assert response.status_code == 200
     assert response.json() == {"status": "dismissed"}
     assert library.get_review("vid1") is None
-    assert library.is_dismissed("vid1")
 
 
 def test_review_page_renders_dismiss_button_and_status(logged_in, library):

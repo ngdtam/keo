@@ -151,9 +151,6 @@ def run_pull(
             try:
                 if heard.plays < PLAYS_TO_QUALIFY:
                     continue
-                if library.is_dismissed(heard.video_id):
-                    log.info("Skipping '%s - %s' (%s): dismissed", heard.artist, heard.title, heard.video_id)
-                    continue
                 if library.is_owned(heard.video_id, heard.artist, heard.title):
                     log.info("Skipping '%s - %s' (%s): already in library", heard.artist, heard.title, heard.video_id)
                     continue

@@ -169,12 +169,15 @@ def test_close_match_review_downloads_and_clears_review(catalog, library, worker
     assert library.is_owned("vid1", "", "")
 
 
-def test_dismissed_song_is_skipped(catalog, library, worker, spotdl):
+def test_dismissed_song_can_be_checked_again(catalog, library, worker, spotdl):
+    library.add_review("vid1", "Sơn Tùng M-TP", "Lạc Trôi", reason="weak_match")
     library.dismiss("vid1")
-    catalog.history_items = plays(count=1)
-    pull(catalog, library, worker, spotdl)
-    assert spotdl.lookups == []
     assert library.get_review("vid1") is None
+    catalog.history_items = plays(count=1)
+    spotdl.candidates[QUERY] = candidate(name="Lạc Trôi", artist="Sơn Tùng M-TP")
+    pull(catalog, library, worker, spotdl)
+    assert spotdl.lookups == [QUERY]
+    assert library.get_review("vid1") is not None
 
 
 def test_not_due_before_the_hour(library):
