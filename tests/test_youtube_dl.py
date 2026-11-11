@@ -75,3 +75,4 @@ def test_download_youtube_audio_timeout(tmp_path):
     res = download_youtube_audio("abc123", "Artist", "Song", music_dir, runner=fake_runner)
     assert res.ok is False
     assert "timed out" in res.output
+

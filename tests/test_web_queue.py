@@ -45,24 +45,13 @@ def test_review_tap_downloads_the_stored_candidate_without_a_new_lookup(client, 
     assert spotdl.lookups == []
 
 
-def test_no_metadata_review_tap_looks_up_again(client, auth, library, spotdl):
-    library.add_review("vid1", "Sơn Tùng M-TP", "Lạc Trôi", reason="no_metadata")
-    spotdl.candidates[QUERY] = candidate()
+def test_review_tap_without_spotify_url_enqueues_review_job(client, auth, library):
+    library.add_review("vid1", "Sơn Tùng M-TP", "Lạc Trôi", reason="pending")
     response = client.post("/api/review/vid1/download", headers=auth)
-    assert response.status_code == 202
-    assert response.json() == {"status": "checking"}
-    row = library.get_review("vid1")
-    assert (row.reason, row.spotify_url) == ("close_match", URL)
-    assert library.active_job("vid1") is None
-
-
-def test_no_metadata_review_tap_with_a_weak_result_updates_the_row(client, auth, library, spotdl):
-    library.add_review("vid1", "Sơn Tùng M-TP", "Lạc Trôi", reason="no_metadata")
-    spotdl.candidates[QUERY] = candidate(name="Một Bài Khác", artist="Ai Đó")
-    client.post("/api/review/vid1/download", headers=auth)
-    row = library.get_review("vid1")
-    assert (row.reason, row.spotify_url) == ("weak_match", URL)
-    assert library.active_job("vid1") is None
+    assert response.status_code == 200
+    job = response.json()["job"]
+    assert job["source"] == "review"
+    assert job["video_id"] == "vid1"
 
 
 def test_unknown_review_row_is_404(client, auth):
@@ -113,7 +102,7 @@ def test_review_and_jobs_pages(logged_in, library, worker):
     worker.submit("vid2", "Đen", "Bài Này Chill Phết")
     review = logged_in.get("/review")
     assert review.status_code == 200
-    assert "Một Bài Khác" in review.text
+    assert "Lạc Trôi" in review.text
     jobs = logged_in.get("/jobs", follow_redirects=False)
     assert jobs.status_code == 303
     assert jobs.headers["location"] == "/library"
@@ -302,20 +291,14 @@ def test_review_page_renders_dismiss_button_and_status(logged_in, library):
     assert "status-dot bg-red" in response.text
 
 
-def test_review_page_renders_pending_status(logged_in, library):
+def test_review_page_renders_download_and_dismiss_buttons(logged_in, library):
     library.add_review("vid_pending", "Low G", "Simp Gái 808", reason="pending")
     response = logged_in.get("/review")
     assert response.status_code == 200
-    assert "Searching on Spotify…" in response.text
-    assert "Searching…" in response.text
-
-
-def test_review_page_renders_download_youtube_for_no_metadata(logged_in, library):
-    library.add_review("vid_nometa", "Kidsai", "TALAGI", reason="no_metadata")
-    response = logged_in.get("/review")
-    assert response.status_code == 200
-    assert "Download from YouTube" in response.text
-    assert 'data-post="/api/review/vid_nometa/download-youtube"' in response.text
+    assert 'data-post="/api/review/vid_pending/download"' in response.text
+    assert 'data-dismiss="/api/review/vid_pending/dismiss"' in response.text
+    assert "Download" in response.text
+    assert "Dismiss" in response.text
 
 
 def test_review_download_youtube_enqueues_job(client, auth, library):

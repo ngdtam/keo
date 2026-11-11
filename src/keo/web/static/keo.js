@@ -94,21 +94,7 @@ async function updateReviewList(container) {
       container.innerHTML = '<li class="list-group-item" id="empty-review">Nothing to review.</li>';
       return;
     }
-    const html = items.map((row) => {
-      let matchHtml = "";
-      let actionButtons = "";
-      if (row.reason === "pending") {
-        matchHtml = '<div class="text-secondary"><span class="spinner-border spinner-border-sm me-1" role="status"></span>Searching on Spotify…</div>';
-        actionButtons = '<button type="button" class="btn" disabled>Searching…</button>';
-      } else if (row.spotify_url) {
-        matchHtml = `<div class="text-secondary">Spotify match: ${escapeHtml(row.candidate_title)} — ${escapeHtml(row.candidate_artist)}</div>`;
-        actionButtons = `<button type="button" class="btn" data-post="/api/review/${encodeURIComponent(row.video_id)}/download">Download</button>`;
-      } else {
-        matchHtml = '<div class="text-secondary">No Spotify match found.</div>';
-        actionButtons = `<button type="button" class="btn btn-outline-primary" data-post="/api/review/${encodeURIComponent(row.video_id)}/download-youtube">Download from YouTube</button>
-<button type="button" class="btn" data-post="/api/review/${encodeURIComponent(row.video_id)}/download">Look up again</button>`;
-      }
-      return `
+    const html = items.map((row) => `
     <li class="list-group-item" data-video-id="${escapeHtml(row.video_id)}">
       <div class="row align-items-center">
         <div class="col">
@@ -118,17 +104,17 @@ async function updateReviewList(container) {
           </div>
           <div class="fw-bold">${escapeHtml(row.heard_title)}</div>
           <div>${escapeHtml(row.heard_artist)}</div>
-          ${matchHtml}
         </div>
         <div class="col-auto d-flex gap-2">
-          ${actionButtons}
+          <button type="button" class="btn" data-post="/api/review/${encodeURIComponent(row.video_id)}/download">
+            Download
+          </button>
           <button type="button" class="btn btn-outline-secondary" data-dismiss="/api/review/${encodeURIComponent(row.video_id)}/dismiss">
             Dismiss
           </button>
         </div>
       </div>
-    </li>`;
-    }).join("");
+    </li>`).join("");
     container.innerHTML = html;
   } catch {}
 }

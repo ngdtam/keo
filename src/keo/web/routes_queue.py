@@ -102,21 +102,15 @@ def api_review_download(request: Request, video_id: str):
     if row is None:
         raise HTTPException(status_code=404, detail="Not on the review list")
     require_download(services)
-    if row.spotify_url:
-        job = services.worker.submit(
-            row.video_id, row.heard_artist, row.heard_title,
-            source="review", spotify_url=row.spotify_url, spotify_id=row.spotify_id,
-        )
-        return queued(job)
-    services.run_later(
-        lambda: decide(
-            row.video_id, row.heard_artist, row.heard_title,
-            library=services.library, worker=services.worker, spotdl=services.spotdl,
-            cookies=services.cookies,
-            source="review", replace_review=True,
-        )
+    job = services.worker.submit(
+        row.video_id,
+        row.heard_artist,
+        row.heard_title,
+        source="review",
+        spotify_url=row.spotify_url,
+        spotify_id=row.spotify_id,
     )
-    return JSONResponse({"status": "checking"}, status_code=202)
+    return queued(job)
 
 
 @router.post("/api/review/{video_id}/download-youtube", **API)
