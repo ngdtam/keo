@@ -1,7 +1,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from keo.history import Scheduler, is_due, run_pull
+from keo.history import Scheduler, decide, is_due, run_pull
 from keo.records import HistoryItem
 from tests.fakes import QUERY, candidate
 
@@ -21,43 +21,27 @@ def pull(catalog, library, worker, spotdl, now=NIGHT):
     )
 
 
-def test_close_match_played_once_goes_to_review(catalog, library, worker, spotdl):
+def test_unowned_played_song_goes_directly_to_review(catalog, library, worker, spotdl):
     catalog.history_items = plays(count=1)
-    spotdl.candidates[QUERY] = candidate(name="Lạc Trôi (feat. Triple D)", artist="SƠN TÙNG M-TP")
     pull(catalog, library, worker, spotdl)
     assert library.active_job("vid1") is None
     row = library.get_review("vid1")
     assert row is not None
-    assert (row.reason, row.spotify_url) == ("close_match", URL)
+    assert row.heard_title == "Lạc Trôi"
+    assert row.reason == "pending"
+    assert spotdl.lookups == []
 
 
-def test_single_play_today_qualifies_for_lookup(catalog, library, worker, spotdl):
+def test_single_play_today_qualifies_for_review(catalog, library, worker, spotdl):
     catalog.history_items = plays(count=1)
-    spotdl.candidates[QUERY] = candidate(name="Lạc Trôi (feat. Triple D)", artist="SƠN TÙNG M-TP")
     pull(catalog, library, worker, spotdl)
     assert library.get_review("vid1") is not None
-
-
-def test_unowned_items_are_added_as_pending_before_lookup(catalog, library, worker, spotdl):
-    catalog.history_items = plays(count=1)
-    observed_reasons = []
-    orig_lookup = spotdl.lookup
-
-    def lookup_with_check(query):
-        row = library.get_review("vid1")
-        observed_reasons.append(row.reason if row else None)
-        return orig_lookup(query)
-
-    spotdl.lookup = lookup_with_check
-    spotdl.candidates[QUERY] = candidate(name="Lạc Trôi", artist="Sơn Tùng M-TP")
-    pull(catalog, library, worker, spotdl)
-    assert observed_reasons == ["pending"]
-    assert library.get_review("vid1").reason == "close_match"
 
 
 def test_plays_from_older_shelves_do_not_count(catalog, library, worker, spotdl):
     catalog.history_items = plays(count=5, label="Last week")
     pull(catalog, library, worker, spotdl)
+    assert library.get_review("vid1") is None
     assert spotdl.lookups == []
 
 
@@ -67,7 +51,9 @@ def test_plays_from_yesterday_and_this_week_qualify(catalog, library, worker, sp
         HistoryItem("vid2", "Đen Vâu", "Trốn Tìm", "This week"),
     ]
     pull(catalog, library, worker, spotdl)
-    assert spotdl.lookups == ["Sơn Tùng M-TP - Lạc Trôi", "Đen Vâu - Trốn Tìm"]
+    assert library.get_review("vid1") is not None
+    assert library.get_review("vid2") is not None
+    assert spotdl.lookups == []
 
 
 def test_run_pull_logs_activity(catalog, library, worker, spotdl, caplog):
@@ -79,7 +65,7 @@ def test_run_pull_logs_activity(catalog, library, worker, spotdl, caplog):
     pull(catalog, library, worker, spotdl)
     assert "Starting history pull" in caplog.text
     assert "Fetched 1 history items" in caplog.text
-    assert "Looking up 'Sơn Tùng M-TP - Lạc Trôi' (vid1) on Spotify" in caplog.text
+    assert "Added 'Sơn Tùng M-TP - Lạc Trôi' (vid1) to review" in caplog.text
     assert "History pull completed" in caplog.text
 
 
@@ -120,18 +106,16 @@ def test_run_pull_updates_progress(catalog, library, worker, spotdl):
     assert prog.snapshot()["active"] is False
 
 
-def test_weak_match_goes_to_review(catalog, library, worker, spotdl):
-    catalog.history_items = plays()
+def test_decide_weak_match_goes_to_review(library, worker, spotdl):
     spotdl.candidates[QUERY] = candidate(name="Một Bài Khác", artist="Ai Đó")
-    pull(catalog, library, worker, spotdl)
+    assert decide("vid1", "Sơn Tùng M-TP", "Lạc Trôi", library=library, worker=worker, spotdl=spotdl, cookies=worker.cookies) == "review"
     row = library.get_review("vid1")
     assert (row.reason, row.candidate_title, row.spotify_id) == ("weak_match", "Một Bài Khác", "sp1")
     assert library.active_job("vid1") is None
 
 
-def test_no_metadata_goes_to_review(catalog, library, worker, spotdl):
-    catalog.history_items = plays()
-    pull(catalog, library, worker, spotdl)
+def test_decide_no_metadata_goes_to_review(library, worker, spotdl):
+    assert decide("vid1", "Sơn Tùng M-TP", "Lạc Trôi", library=library, worker=worker, spotdl=spotdl, cookies=worker.cookies) == "review"
     row = library.get_review("vid1")
     assert (row.reason, row.spotify_url) == ("no_metadata", None)
 
@@ -150,14 +134,10 @@ def test_song_with_an_active_job_is_skipped(catalog, library, worker, spotdl):
     assert spotdl.lookups == []
 
 
-def test_one_song_failing_does_not_stop_the_rest(catalog, library, worker, spotdl):
+def test_multiple_unowned_songs_are_all_added_to_review(catalog, library, worker, spotdl):
     catalog.history_items = plays() + plays("vid2", "Đen", "Bài Này Chill Phết")
-    spotdl.fail_queries.add(QUERY)
-    spotdl.candidates["Đen - Bài Này Chill Phết"] = candidate(
-        name="Bài Này Chill Phết", artist="Đen", song_id="sp2"
-    )
     pull(catalog, library, worker, spotdl)
-    assert library.get_review("vid1") is None
+    assert library.get_review("vid1") is not None
     assert library.get_review("vid2") is not None
 
 
@@ -191,9 +171,7 @@ def test_dismissed_song_can_be_checked_again(catalog, library, worker, spotdl):
     library.dismiss("vid1")
     assert library.get_review("vid1") is None
     catalog.history_items = plays(count=1)
-    spotdl.candidates[QUERY] = candidate(name="Lạc Trôi", artist="Sơn Tùng M-TP")
     pull(catalog, library, worker, spotdl)
-    assert spotdl.lookups == [QUERY]
     assert library.get_review("vid1") is not None
 
 

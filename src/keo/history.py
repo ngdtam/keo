@@ -151,8 +151,6 @@ def run_pull(
                 log.info("Skipping '%s - %s' (%s): download already active", heard.artist, heard.title, heard.video_id)
                 continue
             qualifying.append(heard)
-            if library.get_review(heard.video_id) is None:
-                library.add_review(heard.video_id, heard.artist, heard.title, reason="pending")
 
         if progress:
             progress.start_processing(len(qualifying))
@@ -162,24 +160,12 @@ def run_pull(
         )
         added = 0
         for heard in qualifying:
-            try:
-                try:
-                    log.info("Looking up '%s - %s' (%s) on Spotify...", heard.artist, heard.title, heard.video_id)
-                    outcome = decide(
-                        heard.video_id, heard.artist, heard.title,
-                        library=library, worker=worker, spotdl=spotdl, cookies=cookies,
-                    )
-                    log.info("Decision for '%s - %s' (%s): %s", heard.artist, heard.title, heard.video_id, outcome)
-                    if outcome == "review":
-                        added += 1
-                except Exception:
-                    log.exception("History decision failed for %s", heard.video_id)
-                    row = library.get_review(heard.video_id)
-                    if row and row.reason == "pending":
-                        library.dismiss(heard.video_id)
-            finally:
-                if progress:
-                    progress.step()
+            if library.get_review(heard.video_id) is None:
+                library.add_review(heard.video_id, heard.artist, heard.title, reason="pending")
+                log.info("Added '%s - %s' (%s) to review", heard.artist, heard.title, heard.video_id)
+                added += 1
+            if progress:
+                progress.step()
         log.info("History pull completed: %d new item(s) added to review", added)
         return pull_id
     finally:
