@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     spotify_url TEXT,
     spotify_id TEXT,
     status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed')),
-    source TEXT NOT NULL CHECK (source IN ('manual', 'history', 'review', 'library')),
+    source TEXT NOT NULL CHECK (source IN ('manual', 'history', 'review', 'library', 'youtube')),
     error TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -204,11 +204,11 @@ class Library:
             self._db.execute("ALTER TABLE review_next RENAME TO review")
 
     def _accept_library_source(self) -> None:
-        # SQLite cannot change a CHECK. Rebuild jobs so source may be 'library'.
+        # SQLite cannot change a CHECK. Rebuild jobs so source may be 'library' and 'youtube'.
         row = self._db.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'jobs'"
         ).fetchone()
-        if row is None or "'library'" in (row[0] or ""):
+        if row is None or ("'library'" in (row[0] or "") and "'youtube'" in (row[0] or "")):
             return
         with self._db:
             self._db.execute("DROP TABLE IF EXISTS jobs_next")
@@ -222,7 +222,7 @@ class Library:
                     spotify_url TEXT,
                     spotify_id TEXT,
                     status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed')),
-                    source TEXT NOT NULL CHECK (source IN ('manual', 'history', 'review', 'library')),
+                    source TEXT NOT NULL CHECK (source IN ('manual', 'history', 'review', 'library', 'youtube')),
                     error TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
@@ -274,10 +274,11 @@ class Library:
             ).fetchone()
         return row is not None
 
-    def audio_path(self, spotify_id: str) -> str | None:
+    def audio_path(self, identifier: str) -> str | None:
         with self._lock:
             row = self._db.execute(
-                "SELECT audio_path FROM songs WHERE spotify_id = ?", (spotify_id,)
+                "SELECT audio_path FROM songs WHERE spotify_id = ? OR video_id = ?",
+                (identifier, identifier),
             ).fetchone()
         if row is None or row["audio_path"] is None:
             return None
@@ -290,10 +291,11 @@ class Library:
             ).fetchone()
         return str(row["title"]) if row else None
 
-    def set_audio_path(self, spotify_id: str, path: str) -> None:
+    def set_audio_path(self, identifier: str, path: str) -> None:
         with self._lock, self._db:
             self._db.execute(
-                "UPDATE songs SET audio_path = ? WHERE spotify_id = ?", (path, spotify_id)
+                "UPDATE songs SET audio_path = ? WHERE spotify_id = ? OR video_id = ?",
+                (path, identifier, identifier),
             )
 
     def forget_spotify(self, spotify_id: str) -> None:

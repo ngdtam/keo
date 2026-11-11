@@ -171,3 +171,45 @@ def test_a_premium_job_fails_before_lookup_when_the_cookie_is_missing(worker, li
     assert (stored.status, stored.error) == ("failed", MISSING_LINE)
     assert spotdl.lookups == []
     assert spotdl.downloads == []
+
+
+import subprocess
+from keo.jobs import Worker
+
+
+def test_youtube_source_job_downloads_via_youtube_and_marks_owned(library, spotdl, cookies, tmp_path):
+    music = tmp_path / "music"
+    music.mkdir()
+    calls = []
+
+    def fake_youtube_runner(args, **kwargs):
+        calls.append(args)
+        # Simulate creating an audio file in music
+        (music / "Low G - An Thần.mp3").write_bytes(b"dummy audio")
+        return subprocess.CompletedProcess(args, 0, stdout="Downloaded", stderr="")
+
+    yt_worker = Worker(library, spotdl, music_dir=music, cookies=cookies, youtube_runner=fake_youtube_runner)
+    library.add_review("vid_yt", "Low G", "An Thần", reason="no_metadata")
+    job = yt_worker.submit("vid_yt", "Low G", "An Thần", source="youtube")
+    assert job.source == "youtube"
+    assert yt_worker.run_once()
+    stored = library.get_job(job.id)
+    assert stored.status == "succeeded"
+    assert len(calls) == 1
+    assert library.is_owned("vid_yt", "Low G", "An Thần")
+    assert library.list_review() == []
+    assert library.audio_path("vid_yt") == str(music / "Low G - An Thần.mp3")
+
+
+def test_youtube_source_job_records_failure(library, spotdl, cookies, tmp_path):
+    def failing_runner(args, **kwargs):
+        return subprocess.CompletedProcess(args, 1, stdout="", stderr="yt-dlp error")
+
+    yt_worker = Worker(library, spotdl, music_dir=tmp_path, cookies=cookies, youtube_runner=failing_runner)
+    job = yt_worker.submit("vid_yt_fail", "Artist", "Fail", source="youtube")
+    assert yt_worker.run_once()
+    stored = library.get_job(job.id)
+    assert stored.status == "failed"
+    assert "yt-dlp error" in stored.error
+    assert not library.is_owned("vid_yt_fail", "Artist", "Fail")
+

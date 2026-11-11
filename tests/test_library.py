@@ -1,3 +1,5 @@
+import sqlite3
+
 from keo.library import Library
 from keo.records import HistoryItem
 
@@ -205,3 +207,27 @@ def test_add_review_supports_pending_reason(library):
     row = library.get_review("vid_pending")
     assert row is not None
     assert row.reason == "pending"
+
+
+def test_jobs_supports_youtube_source_and_migrates_old_table(tmp_path):
+    db = tmp_path / "legacy.db"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE jobs ("
+        " id INTEGER PRIMARY KEY, video_id TEXT NOT NULL, artist TEXT NOT NULL, title TEXT NOT NULL,"
+        " spotify_url TEXT, spotify_id TEXT,"
+        " status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed')),"
+        " source TEXT NOT NULL CHECK (source IN ('manual', 'history', 'review', 'library')),"
+        " error TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO jobs VALUES (1, 'v1', 'A', 'B', NULL, NULL, 'queued', 'manual', NULL, '2026-11-10T00:00:00', '2026-11-10T00:00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    library = Library(db, tmp_path / "archive.txt")
+    job = library.enqueue("v2", "A2", "B2", source="youtube")
+    assert job.source == "youtube"
+    assert library.get_job(1).source == "manual"
+

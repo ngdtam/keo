@@ -10,6 +10,7 @@ from keo.config import cookie_ready
 from keo.cookies import CookieGate, settings_are_premium
 from keo.library import Job, Library, list_audio
 from keo.spotdl_cmd import Spotdl
+from keo.youtube_dl import Runner, download_youtube_audio
 
 log = logging.getLogger(__name__)
 IDLE_WAIT_SECONDS = 5
@@ -23,11 +24,13 @@ class Worker:
         music_dir: Path | None = None,
         *,
         cookies: CookieGate,
+        youtube_runner: Runner | None = None,
     ) -> None:
         self._library = library
         self._spotdl = spotdl
         self._music = music_dir
         self.cookies = cookies
+        self._youtube_runner = youtube_runner
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -94,6 +97,9 @@ class Worker:
             self._wake.clear()
 
     def _process(self, job: Job) -> None:
+        if job.source == "youtube":
+            self._process_youtube(job)
+            return
         reason = self.cookies.allow(self._spotdl.settings)
         if reason is not None:
             self._library.finish(job.id, ok=False, error=reason)
@@ -123,6 +129,29 @@ class Worker:
             appeared = list_audio(self._music) - before if self._music else set()
             if spotify_id and len(appeared) == 1:
                 self._library.set_audio_path(spotify_id, str(appeared.pop()))
+            self._library.finish(job.id, ok=True)
+        else:
+            self._library.finish(job.id, ok=False, error=result.output)
+
+    def _process_youtube(self, job: Job) -> None:
+        before = list_audio(self._music) if self._music else set()
+        kwargs = {}
+        if self._youtube_runner is not None:
+            kwargs["runner"] = self._youtube_runner
+        result = download_youtube_audio(
+            video_id=job.video_id,
+            artist=job.artist,
+            title=job.title,
+            music_dir=self._music or Path("music"),
+            audio_format=job.format or self._spotdl.settings.format or "mp3",
+            cookie_file=self._spotdl.settings.cookie_file if self._spotdl.settings.cookie_file else None,
+            **kwargs,
+        )
+        if result.ok:
+            self._library.mark_owned(job.video_id, job.artist, job.title, None)
+            appeared = list_audio(self._music) - before if self._music else set()
+            if len(appeared) == 1:
+                self._library.set_audio_path(job.video_id, str(appeared.pop()))
             self._library.finish(job.id, ok=True)
         else:
             self._library.finish(job.id, ok=False, error=result.output)
