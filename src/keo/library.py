@@ -6,6 +6,7 @@ because the web threads, the worker, and the scheduler share one connection.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import threading
 from dataclasses import dataclass
@@ -149,6 +150,33 @@ def _now() -> str:
 RECENT_PLAYED_LABELS: tuple[str, ...] = ("Today", "Yesterday", "This week")
 
 
+def _artists_overlap(left: str, right: str) -> bool:
+    if not left or not right:
+        return False
+    norm_left = f" {normalize(left)} "
+    norm_right = f" {normalize(right)} "
+    if norm_left.strip() in norm_right or norm_right.strip() in norm_left:
+        return True
+    tokens_left = {t.strip() for t in re.split(r"[,&x+/]|\b(?:feat|ft)\b", left.casefold()) if len(t.strip()) > 1}
+    tokens_right = {t.strip() for t in re.split(r"[,&x+/]|\b(?:feat|ft)\b", right.casefold()) if len(t.strip()) > 1}
+    for tl in tokens_left:
+        for tr in tokens_right:
+            norm_tl = normalize(tl)
+            norm_tr = normalize(tr)
+            if norm_tl and (norm_tl == norm_tr or norm_tl in norm_tr or norm_tr in norm_tl):
+                return True
+    return False
+
+
+def _artist_in_filename(artist: str, audio_path: str) -> bool:
+    if not artist or not audio_path:
+        return False
+    filename = Path(audio_path).stem
+    artist_norm = normalize(artist)
+    filename_norm = normalize(filename)
+    return bool(artist_norm) and (artist_norm in filename_norm or f" {artist_norm} " in f" {filename_norm} ")
+
+
 class Library:
     def __init__(self, db_path: Path, archive_path: Path) -> None:
         self._archive_path = archive_path
@@ -253,12 +281,30 @@ class Library:
     # Owned songs
 
     def is_owned(self, video_id: str, artist: str, title: str) -> bool:
+        norm_title = normalize(title)
+        norm_artist = normalize(artist)
         with self._lock:
-            row = self._db.execute(
-                "SELECT 1 FROM songs WHERE video_id = ? OR (artist_key = ? AND title_key = ?)",
-                (video_id, normalize(artist), normalize(title)),
-            ).fetchone()
-        return row is not None
+            # 1. Match video_id in songs or succeeded jobs
+            if self._db.execute("SELECT 1 FROM songs WHERE video_id = ?", (video_id,)).fetchone() is not None:
+                return True
+            if self._db.execute("SELECT 1 FROM jobs WHERE video_id = ? AND status = 'succeeded'", (video_id,)).fetchone() is not None:
+                return True
+
+            # 2. Exact match on (artist_key, title_key)
+            if self._db.execute("SELECT 1 FROM songs WHERE artist_key = ? AND title_key = ?", (norm_artist, norm_title)).fetchone() is not None:
+                return True
+
+            # 3. Match by title with artist overlap or audio_path filename match
+            cursor = self._db.execute("SELECT artist, audio_path FROM songs WHERE title_key = ?", (norm_title,))
+            for s_row in cursor.fetchall():
+                db_artist = str(s_row["artist"] or "")
+                raw_path = str(s_row["audio_path"] or "")
+                if _artists_overlap(artist, db_artist):
+                    return True
+                if raw_path and _artist_in_filename(artist, raw_path):
+                    return True
+
+        return False
 
     def is_owned_spotify(self, spotify_id: str) -> bool:
         with self._lock:
@@ -312,12 +358,19 @@ class Library:
             self._db.execute("DELETE FROM jobs WHERE spotify_id = ?", (spotify_id,))
 
     def mark_owned(self, video_id: str, artist: str, title: str, spotify_id: str | None) -> None:
+        norm_title = normalize(title)
+        norm_artist = normalize(artist)
         with self._lock, self._db:
+            if spotify_id:
+                self._db.execute(
+                    "UPDATE songs SET video_id = coalesce(video_id, ?) WHERE spotify_id = ?",
+                    (video_id, spotify_id),
+                )
             self._db.execute(
                 "INSERT OR IGNORE INTO songs"
                 " (video_id, artist_key, title_key, spotify_id, artist, title)"
                 " VALUES (?, ?, ?, ?, ?, ?)",
-                (video_id, normalize(artist), normalize(title), spotify_id, artist, title),
+                (video_id, norm_artist, norm_title, spotify_id, artist, title),
             )
             self._db.execute("DELETE FROM review WHERE video_id = ?", (video_id,))
 

@@ -17,6 +17,30 @@ def test_owned_by_normalized_name(library):
     assert not library.is_owned("vid3", "Sơn Tùng M-TP", "Chúng Ta Của Hiện Tại")
 
 
+def test_owned_by_succeeded_job(library):
+    job = library.enqueue("vid_job", "Artist", "Title", source="manual")
+    library.finish(job.id, ok=True)
+    assert library.is_owned("vid_job", "Different", "Other")
+
+
+def test_owned_by_artist_overlap(library):
+    library.mark_owned("vid1", "Osad, Hà An Huy", "Như Một Người Rưng", "sp1")
+    assert library.is_owned("vid_new1", "OSAD", "Như Một Người Rưng")
+    assert library.is_owned("vid_new2", "Hà An Huy", "Như Một Người Rưng")
+    assert not library.is_owned("vid_new3", "Trúc Nhân", "Như Một Người Rưng")
+
+
+def test_owned_by_audio_path_filename_artist(library):
+    library.mark_owned("vid1", "Hà An Huy", "Như Một Người Rưng", "sp1")
+    library.set_audio_path("sp1", "/music/Osad, Hà An Huy - Như Một Người Rưng.opus")
+    assert library.is_owned("vid_new", "OSAD", "Như Một Người Rưng")
+
+
+def test_same_title_different_artist_not_owned(library):
+    library.mark_owned("vid1", "Adele", "Hello", "sp_adele")
+    assert not library.is_owned("vid_lionel", "Lionel Richie", "Hello")
+
+
 def test_owned_by_spotify_id_in_songs_or_archive(library, tmp_path):
     library.mark_owned("vid1", "A", "B", "sp1")
     assert library.is_owned_spotify("sp1")
