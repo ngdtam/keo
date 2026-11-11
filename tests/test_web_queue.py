@@ -272,6 +272,14 @@ def test_review_page_renders_check_history_button(logged_in):
     assert "Check history now" in response.text
 
 
+def test_keo_js_contains_history_and_job_polling(client):
+    response = client.get("/static/keo.js")
+    assert response.status_code == 200
+    assert "pollHistoryStatus" in response.text
+    assert "pollJobs" in response.text
+    assert "/api/history/status" in response.text
+
+
 def test_dismiss_review_requires_token(client):
     assert client.post("/api/review/vid1/dismiss").status_code == 401
 
