@@ -90,6 +90,11 @@ def api_history_pull(request: Request):
     return JSONResponse({"status": "checking"}, status_code=202)
 
 
+@router.get("/api/history/status", **API)
+def api_history_status(request: Request):
+    return JSONResponse(get_services(request).history_progress.snapshot())
+
+
 @router.post("/api/review/{video_id}/download", **API)
 def api_review_download(request: Request, video_id: str):
     services = get_services(request)

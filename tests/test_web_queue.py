@@ -234,6 +234,25 @@ def test_history_pull_requires_token(client):
     assert client.post("/api/history/pull").status_code == 401
 
 
+def test_history_status_requires_token(client):
+    assert client.get("/api/history/status").status_code == 401
+
+
+def test_history_status_returns_progress(client, auth):
+    services = client.app.state.services
+    services.history_progress.start_processing(10)
+    services.history_progress.step()
+    response = client.get("/api/history/status", headers=auth)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["active"] is True
+    assert data["stage"] == "processing"
+    assert data["current"] == 1
+    assert data["total"] == 10
+    assert data["percent"] == 10
+    services.history_progress.finish()
+
+
 def test_history_pull_triggers_background_pull(client, auth, catalog, library, worker, spotdl, caplog):
     import logging
     caplog.set_level(logging.INFO)
