@@ -1,6 +1,4 @@
 sources/
-spotify-downloader/
-ytmusicapi/
 .venv/
 __pycache__/
 *.egg-info/
@@ -13,4 +11,3 @@ secrets/
 .DS_Store
 docs/superpowers/
 .worktrees/
-compose.override.yaml
