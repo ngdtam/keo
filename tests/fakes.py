@@ -79,6 +79,7 @@ class FakeSpotdl:
         self.download_error = None
         self.lookups = []
         self.downloads = []
+        self.download_video_ids = []
         self.settings = SpotdlSettings()
 
     def use(self, settings):
@@ -90,8 +91,9 @@ class FakeSpotdl:
             raise RuntimeError(f"lookup crashed for {query}")
         return Lookup(self.candidates.get(query), "fake lookup output")
 
-    def download(self, url, spotify_id):
+    def download(self, url, spotify_id, *, video_id=None):
         self.downloads.append(url)
+        self.download_video_ids.append(video_id)
         if self.download_error is not None:
             raise self.download_error
         return DownloadResult(self.download_ok, "fake download output")

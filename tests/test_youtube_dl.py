@@ -8,6 +8,7 @@ from keo.youtube_dl import (
     build_yt_dlp_args,
     download_youtube_audio,
     sanitize_filename,
+    write_tags,
 )
 
 
@@ -75,4 +76,42 @@ def test_download_youtube_audio_timeout(tmp_path):
     res = download_youtube_audio("abc123", "Artist", "Song", music_dir, runner=fake_runner)
     assert res.ok is False
     assert "timed out" in res.output
+
+
+def test_build_yt_dlp_args_uses_output_template_and_max_length(tmp_path):
+    music_dir = tmp_path / "music"
+    args = build_yt_dlp_args(
+        "abc1234",
+        "Low G",
+        "An Thần",
+        music_dir,
+        audio_format="mp3",
+        output_template="{title} [{artists}].{output-ext}",
+        max_filename_length=12,
+    )
+    out_arg = args[args.index("-o") + 1]
+    assert out_arg.startswith(str(music_dir) + "/")
+    assert out_arg.endswith(".%(ext)s")
+    stem = Path(out_arg).stem
+    assert stem == "An Thần [Low"
+
+
+def test_write_tags_sets_artist_and_title_and_ignores_bad_files(tmp_path, monkeypatch):
+    bad = tmp_path / "bad.mp3"
+    bad.write_bytes(b"not-audio")
+    write_tags(bad, artist="Đen", title="Lối Nhỏ")  # must not raise
+
+    fake_tags = {}
+
+    class FakeAudio:
+        tags = fake_tags
+        def save(self):
+            fake_tags["_saved"] = True
+
+    import mutagen
+    monkeypatch.setattr(mutagen, "File", lambda p, easy=True: FakeAudio())
+    write_tags(bad, artist="Đen", title="Lối Nhỏ")
+    assert fake_tags["artist"] == ["Đen"]
+    assert fake_tags["title"] == ["Lối Nhỏ"]
+    assert fake_tags["_saved"] is True
 

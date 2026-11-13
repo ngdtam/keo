@@ -206,7 +206,7 @@ def test_download_stores_one_new_file(library, spotdl, tmp_path, cookies):
     music = tmp_path / "music"
     music.mkdir()
 
-    def download(url, spotify_id):
+    def download(url, spotify_id, **kwargs):
         (music / "A - Song.opus").write_bytes(b"song")
         return DownloadResult(True, "")
 
@@ -271,7 +271,7 @@ def test_missing_probe_leaves_the_labels_out(logged_in, library, tmp_path, monke
 def test_download_stores_nothing_when_no_file_appears(library, spotdl, tmp_path, cookies):
     music = tmp_path / "music"
     music.mkdir()
-    spotdl.download = lambda url, spotify_id: DownloadResult(True, "")
+    spotdl.download = lambda url, spotify_id, **kwargs: DownloadResult(True, "")
     worker = Worker(library, spotdl, music, cookies=cookies)
     worker.submit("vid1", "A", "Song", spotify_url=URL, spotify_id="sp1")
     assert worker.run_once()
@@ -550,3 +550,101 @@ def test_delete_video_song_scope_library(logged_in, library, tmp_path):
     assert not audio.with_suffix(".lrc").exists()
     assert library.get_job(job.id) is None
     assert "Lối Nhỏ" not in logged_in.get("/library").text
+
+
+def test_library_shows_more_than_100_songs_and_deletes_oldest(logged_in, library):
+    for i in range(105):
+        library.mark_owned(f"vid{i}", f"Artist {i}", f"Title {i}", f"sp{i}")
+        library.enqueue(f"vid{i}", f"Artist {i}", f"Title {i}", source="manual", spotify_id=f"sp{i}")
+    page = logged_in.get("/library")
+    assert "Title 0" in page.text
+    assert "Title 104" in page.text
+    resp = logged_in.post("/library/spotify/sp0/delete", follow_redirects=False)
+    assert resp.status_code == 303
+    assert not library.has_spotify("sp0")
+
+
+def test_library_uses_cached_metadata_without_opening_files(logged_in, library, tmp_path, monkeypatch):
+    audio = tmp_path / "music" / "A - Cached.mp3"
+    audio.write_bytes(b"mp3")
+    song = library.upsert_scanned_song("A", "Cached", str(audio))
+    library.set_audio_cache(
+        song.id, audio_path=str(audio), mtime=audio.stat().st_mtime, size=3,
+        card="MP3 · 320 kbps", details=(("Format", "MP3"),), has_cover=True,
+    )
+    monkeypatch.setattr(
+        "keo.web.routes_library.load",
+        lambda p: (_ for _ in ()).throw(AssertionError("should not read MediaInfo")),
+    )
+    monkeypatch.setattr(
+        "keo.web.routes_library.cover_bytes",
+        lambda p: (_ for _ in ()).throw(AssertionError("should not read cover")),
+    )
+    page = logged_in.get("/library")
+    assert page.status_code == 200
+    assert "MP3 · 320 kbps" in page.text
+    assert f"/library/song/{song.id}/cover" in page.text
+
+
+def test_rescan_button_and_manual_song_page_and_delete(logged_in, library, tmp_path):
+    audio = tmp_path / "music" / "Manual Artist - Manual Song.mp3"
+    audio.write_bytes(b"mp3")
+    resp = logged_in.post("/library/rescan", follow_redirects=False)
+    assert resp.status_code == 303
+    page = logged_in.get("/library")
+    assert "Manual Song" in page.text
+    song = library.list_songs()[0]
+    detail = logged_in.get(f"/library/song/{song.id}")
+    assert detail.status_code == 200
+    assert "Manual Artist" in detail.text
+    delete = logged_in.post(f"/library/song/{song.id}/delete", data={"scope": "library"}, follow_redirects=False)
+    assert delete.status_code == 303
+    assert not audio.exists()
+    assert library.list_songs() == []
+
+
+def test_delete_moves_to_recycle_and_trash_restore_delete_empty(logged_in, library, tmp_path):
+    music = tmp_path / "music"
+    audio = music / "Trash Artist - Trash Song.mp3"
+    audio.write_bytes(b"mp3")
+    audio.with_suffix(".lrc").write_text("words", encoding="utf-8")
+    logged_in.post("/library/rescan")
+    song = library.list_songs()[0]
+
+    logged_in.post(f"/library/song/{song.id}/delete", data={"scope": "library"}, follow_redirects=False)
+    assert not audio.exists()
+    assert (music / ".recycle" / "Trash Artist - Trash Song.mp3").is_file()
+    assert (music / ".recycle" / "Trash Artist - Trash Song.lrc").is_file()
+
+    trash = logged_in.get("/library/trash")
+    assert trash.status_code == 200
+    assert "Trash Artist - Trash Song.mp3" in trash.text
+
+    restore = logged_in.post(
+        "/library/trash/restore",
+        data={"name": "Trash Artist - Trash Song.mp3"},
+        follow_redirects=False,
+    )
+    assert restore.status_code == 303
+    assert audio.is_file()
+    assert audio.with_suffix(".lrc").is_file()
+    assert len(library.list_songs()) == 1
+
+    song2 = library.list_songs()[0]
+    logged_in.post(f"/library/song/{song2.id}/delete", data={"scope": "library"})
+    perm = logged_in.post(
+        "/library/trash/delete",
+        data={"name": "Trash Artist - Trash Song.mp3"},
+        follow_redirects=False,
+    )
+    assert perm.status_code == 303
+    assert not (music / ".recycle" / "Trash Artist - Trash Song.mp3").exists()
+
+    extra = music / "Extra - Song.mp3"
+    extra.write_bytes(b"mp3")
+    logged_in.post("/library/rescan")
+    song3 = library.list_songs()[0]
+    logged_in.post(f"/library/song/{song3.id}/delete", data={"scope": "library"})
+    empty = logged_in.post("/library/trash/empty", follow_redirects=False)
+    assert empty.status_code == 303
+    assert "No trashed files." in logged_in.get("/library/trash").text

@@ -168,3 +168,10 @@ def test_a_failed_check_keeps_the_failed_line(page, spotdl, probe, tmp_path):
     page.post("/settings/cookie/check", follow_redirects=True)
     assert "Cookie check failed" in page.get("/settings").text
     assert "format is opus, which needs a cookie file" not in page.get("/settings").text
+
+
+def test_settings_saves_recycle_days(page, config_file):
+    resp = page.post("/settings", data={"recycle_days": "30"}, follow_redirects=False)
+    assert resp.status_code == 303
+    assert "recycle_days = 30" in config_file.read_text(encoding="utf-8")
+    assert page.app.state.services.recycle_days == 30

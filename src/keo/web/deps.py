@@ -43,6 +43,7 @@ class Services:
     timezone: str = "Asia/Ho_Chi_Minh"
     data_dir: Path | None = None
     music_dir: Path | None = None
+    recycle_days: int = 7
     history_progress: HistoryProgress = field(default_factory=HistoryProgress)
 
 

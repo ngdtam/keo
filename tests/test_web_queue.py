@@ -315,3 +315,11 @@ def test_review_download_youtube_404_when_not_in_review(client, auth):
     res = client.post("/api/review/nonexistent/download-youtube", headers=auth)
     assert res.status_code == 404
 
+
+def test_review_dismiss_permanent_records_dismissed(client, auth, library):
+    library.add_review("vid_perm", "Artist", "Song", reason="pending")
+    res = client.post("/api/review/vid_perm/dismiss?permanent=1", headers=auth)
+    assert res.status_code == 200
+    assert library.get_review("vid_perm") is None
+    assert library.is_dismissed("vid_perm")
+

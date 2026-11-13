@@ -255,3 +255,75 @@ def test_jobs_supports_youtube_source_and_migrates_old_table(tmp_path):
     assert job.source == "youtube"
     assert library.get_job(1).source == "manual"
 
+
+def test_fresh_db_sets_user_version_and_columns(tmp_path):
+    db_path = tmp_path / "fresh.db"
+    Library(db_path, tmp_path / "archive.txt")
+    con = sqlite3.connect(db_path)
+    version = con.execute("PRAGMA user_version").fetchone()[0]
+    cols = {row[1] for row in con.execute("PRAGMA table_info(songs)")}
+    assert version == 2
+    assert {"audio_mtime", "audio_size", "audio_card", "audio_details", "has_cover"} <= cols
+
+
+def test_migrates_v0_db_preserving_rows(tmp_path):
+    db_path = tmp_path / "old.db"
+    con = sqlite3.connect(db_path)
+    con.executescript(
+        """
+        CREATE TABLE songs (
+            id INTEGER PRIMARY KEY, video_id TEXT UNIQUE, artist_key TEXT NOT NULL,
+            title_key TEXT NOT NULL, spotify_id TEXT UNIQUE, artist TEXT NOT NULL,
+            title TEXT NOT NULL, UNIQUE (artist_key, title_key)
+        );
+        INSERT INTO songs (video_id, artist_key, title_key, spotify_id, artist, title)
+        VALUES ('v1', 'a', 'b', 'sp1', 'A', 'B');
+        """
+    )
+    con.close()
+    lib = Library(db_path, tmp_path / "archive.txt")
+    songs = lib.list_songs()
+    assert len(songs) == 1
+    assert songs[0].spotify_id == "sp1"
+    assert sqlite3.connect(db_path).execute("PRAGMA user_version").fetchone()[0] == 2
+
+
+def test_scanned_song_cache_and_missing_cleanup(library):
+    song = library.upsert_scanned_song("Artist", "Track", "/music/Artist - Track.mp3")
+    library.set_audio_cache(
+        song.id,
+        audio_path="/music/Artist - Track.mp3",
+        mtime=123.5,
+        size=456,
+        card="MP3 · 320 kbps",
+        details=(("Format", "MPEG Audio"),),
+        has_cover=True,
+    )
+    loaded = library.get_song(song.id)
+    assert loaded is not None
+    assert loaded.audio_card == "MP3 · 320 kbps"
+    assert loaded.audio_details == (("Format", "MPEG Audio"),)
+    assert loaded.has_cover is True
+    assert library.clear_missing_audio(set()) == 1
+    cleared = library.get_song(song.id)
+    assert cleared is not None
+    assert cleared.audio_path is None
+    assert cleared.audio_card is None
+
+
+def test_housekeep_trims_old_history_and_finished_jobs(library):
+    from datetime import datetime, timezone
+    library.record_pull("2026-09-01T00:00:00+00:00", "ok", None, [HistoryItem("v1", "A", "B", "Today")])
+    library.record_pull("2026-11-10T00:00:00+00:00", "ok", None, [HistoryItem("v2", "A", "C", "Today")])
+    for i in range(4):
+        job = library.enqueue(f"v{i}", "A", f"T{i}", source="manual")
+        if i < 3:
+            library.finish(job.id, ok=True)
+
+    pulls_deleted, jobs_deleted = library.housekeep(
+        keep_days=30, keep_jobs=1, now=datetime(2026, 11, 12, tzinfo=timezone.utc)
+    )
+    assert pulls_deleted == 1
+    assert jobs_deleted == 2
+    assert len(library.list_jobs()) == 2  # 1 kept finished + 1 still queued
+

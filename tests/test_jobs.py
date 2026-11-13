@@ -207,3 +207,11 @@ def test_youtube_source_job_records_failure(library, spotdl, cookies, tmp_path):
     assert "yt-dlp error" in stored.error
     assert not library.is_owned("vid_yt_fail", "Artist", "Fail")
 
+
+def test_worker_passes_video_id_to_spotdl_download(library, spotdl, cookies):
+    spotdl.candidates["Sơn Tùng M-TP - Lạc Trôi"] = candidate()
+    w = Worker(library, spotdl, cookies=cookies)
+    w.submit("vid123", "Sơn Tùng M-TP", "Lạc Trôi")
+    assert w.run_once()
+    assert spotdl.download_video_ids == ["vid123"]
+

@@ -6,11 +6,12 @@ because the web threads, the worker, and the scheduler share one connection.
 
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from keo.archive import archive_ids, drop_track
@@ -70,6 +71,12 @@ CREATE TABLE IF NOT EXISTS songs (
     spotify_id TEXT UNIQUE,
     artist TEXT NOT NULL,
     title TEXT NOT NULL,
+    audio_path TEXT,
+    audio_mtime REAL,
+    audio_size INTEGER,
+    audio_card TEXT,
+    audio_details TEXT,
+    has_cover INTEGER,
     UNIQUE (artist_key, title_key)
 );
 CREATE TABLE IF NOT EXISTS jobs (
@@ -83,7 +90,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     source TEXT NOT NULL CHECK (source IN ('manual', 'history', 'review', 'library', 'youtube')),
     error TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    format TEXT,
+    premium INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS jobs_one_active
     ON jobs (video_id) WHERE status IN ('queued', 'running');
@@ -103,6 +112,23 @@ CREATE TABLE IF NOT EXISTS dismissed (
     created_at TEXT NOT NULL
 );
 """
+
+
+@dataclass(frozen=True)
+class Song:
+    id: int
+    video_id: str | None
+    artist_key: str
+    title_key: str
+    spotify_id: str | None
+    artist: str
+    title: str
+    audio_path: str | None = None
+    audio_mtime: float | None = None
+    audio_size: int | None = None
+    audio_card: str | None = None
+    audio_details: tuple[tuple[str, str], ...] = ()
+    has_cover: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -177,6 +203,35 @@ def _artist_in_filename(artist: str, audio_path: str) -> bool:
     return bool(artist_norm) and (artist_norm in filename_norm or f" {artist_norm} " in f" {filename_norm} ")
 
 
+LATEST_VERSION = 2
+
+
+def _row_to_song(row: sqlite3.Row) -> Song:
+    raw_details = row["audio_details"]
+    details: tuple[tuple[str, str], ...] = ()
+    if raw_details:
+        try:
+            details = tuple((str(k), str(v)) for k, v in json.loads(raw_details))
+        except (ValueError, TypeError):
+            details = ()
+    raw_cover = row["has_cover"]
+    return Song(
+        id=row["id"],
+        video_id=row["video_id"],
+        artist_key=row["artist_key"],
+        title_key=row["title_key"],
+        spotify_id=row["spotify_id"],
+        artist=row["artist"],
+        title=row["title"],
+        audio_path=row["audio_path"],
+        audio_mtime=row["audio_mtime"],
+        audio_size=row["audio_size"],
+        audio_card=row["audio_card"],
+        audio_details=details,
+        has_cover=None if raw_cover is None else bool(raw_cover),
+    )
+
+
 class Library:
     def __init__(self, db_path: Path, archive_path: Path) -> None:
         self._archive_path = archive_path
@@ -184,18 +239,48 @@ class Library:
         self._db = sqlite3.connect(db_path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode = WAL")
+        is_fresh = (
+            self._db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            ).fetchone()
+            is None
+        )
         self._db.executescript(SCHEMA)
-        columns = {row[1] for row in self._db.execute("PRAGMA table_info(jobs)")}
-        song_columns = {row[1] for row in self._db.execute("PRAGMA table_info(songs)")}
-        with self._db:
-            if "format" not in columns:
-                self._db.execute("ALTER TABLE jobs ADD COLUMN format TEXT")
-            if "premium" not in columns:
-                self._db.execute("ALTER TABLE jobs ADD COLUMN premium INTEGER")
-            if "audio_path" not in song_columns:
-                self._db.execute("ALTER TABLE songs ADD COLUMN audio_path TEXT")
-        self._accept_library_source()
-        self._accept_close_match_review()
+        self._migrate(is_fresh)
+
+    def _migrate(self, is_fresh: bool) -> None:
+        version = self._db.execute("PRAGMA user_version").fetchone()[0]
+        if is_fresh and version == 0:
+            with self._db:
+                self._db.execute(f"PRAGMA user_version = {LATEST_VERSION}")
+            return
+        if version < 1:
+            columns = {row[1] for row in self._db.execute("PRAGMA table_info(jobs)")}
+            song_columns = {row[1] for row in self._db.execute("PRAGMA table_info(songs)")}
+            with self._db:
+                if "format" not in columns:
+                    self._db.execute("ALTER TABLE jobs ADD COLUMN format TEXT")
+                if "premium" not in columns:
+                    self._db.execute("ALTER TABLE jobs ADD COLUMN premium INTEGER")
+                if "audio_path" not in song_columns:
+                    self._db.execute("ALTER TABLE songs ADD COLUMN audio_path TEXT")
+            self._accept_library_source()
+            self._accept_close_match_review()
+            with self._db:
+                self._db.execute("PRAGMA user_version = 1")
+        if version < 2:
+            song_columns = {row[1] for row in self._db.execute("PRAGMA table_info(songs)")}
+            with self._db:
+                for col, col_type in (
+                    ("audio_mtime", "REAL"),
+                    ("audio_size", "INTEGER"),
+                    ("audio_card", "TEXT"),
+                    ("audio_details", "TEXT"),
+                    ("has_cover", "INTEGER"),
+                ):
+                    if col not in song_columns:
+                        self._db.execute(f"ALTER TABLE songs ADD COLUMN {col} {col_type}")
+                self._db.execute("PRAGMA user_version = 2")
 
     def _accept_close_match_review(self) -> None:
         row = self._db.execute(
@@ -365,6 +450,93 @@ class Library:
         with self._lock, self._db:
             self._db.execute("DELETE FROM songs WHERE video_id = ?", (video_id,))
 
+    def forget_song(self, song_id: int) -> None:
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM songs WHERE id = ?", (song_id,))
+
+    def list_songs(self) -> list[Song]:
+        with self._lock:
+            rows = self._db.execute("SELECT * FROM songs ORDER BY id DESC").fetchall()
+        return [_row_to_song(row) for row in rows]
+
+    def get_song(self, song_id: int) -> Song | None:
+        with self._lock:
+            row = self._db.execute("SELECT * FROM songs WHERE id = ?", (song_id,)).fetchone()
+        return _row_to_song(row) if row else None
+
+    def get_song_by_identifier(self, kind: str, ident: str) -> Song | None:
+        with self._lock:
+            if kind == "spotify":
+                row = self._db.execute("SELECT * FROM songs WHERE spotify_id = ?", (ident,)).fetchone()
+            elif kind == "video":
+                row = self._db.execute("SELECT * FROM songs WHERE video_id = ?", (ident,)).fetchone()
+            elif kind == "song":
+                try:
+                    song_id = int(ident)
+                except ValueError:
+                    return None
+                row = self._db.execute("SELECT * FROM songs WHERE id = ?", (song_id,)).fetchone()
+            else:
+                row = None
+        return _row_to_song(row) if row else None
+
+    def upsert_scanned_song(self, artist: str, title: str, audio_path: str) -> Song:
+        norm_artist = normalize(artist)
+        norm_title = normalize(title)
+        with self._lock, self._db:
+            row = self._db.execute("SELECT * FROM songs WHERE audio_path = ?", (audio_path,)).fetchone()
+            if row is None and (norm_artist or norm_title):
+                row = self._db.execute(
+                    "SELECT * FROM songs WHERE artist_key = ? AND title_key = ?",
+                    (norm_artist, norm_title),
+                ).fetchone()
+            if row is None:
+                self._db.execute(
+                    "INSERT OR IGNORE INTO songs (video_id, artist_key, title_key, spotify_id, artist, title, audio_path)"
+                    " VALUES (NULL, ?, ?, NULL, ?, ?, ?)",
+                    (norm_artist, norm_title, artist, title, audio_path),
+                )
+                row = self._db.execute(
+                    "SELECT * FROM songs WHERE artist_key = ? AND title_key = ?",
+                    (norm_artist, norm_title),
+                ).fetchone()
+        assert row is not None
+        return _row_to_song(row)
+
+    def set_audio_cache(
+        self,
+        song_id: int,
+        *,
+        audio_path: str,
+        mtime: float,
+        size: int,
+        card: str | None,
+        details: tuple[tuple[str, str], ...],
+        has_cover: bool,
+    ) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "UPDATE songs SET audio_path = ?, audio_mtime = ?, audio_size = ?,"
+                " audio_card = ?, audio_details = ?, has_cover = ? WHERE id = ?",
+                (audio_path, mtime, size, card, json.dumps(details), int(has_cover), song_id),
+            )
+
+    def clear_missing_audio(self, existing_paths: set[str]) -> int:
+        with self._lock, self._db:
+            rows = self._db.execute(
+                "SELECT id, audio_path FROM songs WHERE audio_path IS NOT NULL"
+            ).fetchall()
+            missing_ids = [row["id"] for row in rows if row["audio_path"] not in existing_paths]
+            if missing_ids:
+                placeholders = ", ".join("?" for _ in missing_ids)
+                self._db.execute(
+                    f"UPDATE songs SET audio_path = NULL, audio_mtime = NULL, audio_size = NULL,"
+                    f" audio_card = NULL, audio_details = NULL, has_cover = NULL"
+                    f" WHERE id IN ({placeholders})",
+                    missing_ids,
+                )
+        return len(missing_ids)
+
     def drop_spotify_jobs(self, spotify_id: str) -> None:
         with self._lock, self._db:
             self._db.execute("DELETE FROM jobs WHERE spotify_id = ?", (spotify_id,))
@@ -524,9 +696,14 @@ class Library:
             rows = self._db.execute("SELECT * FROM review ORDER BY created_at").fetchall()
         return [ReviewRow(**dict(row)) for row in rows]
 
-    def dismiss(self, video_id: str) -> None:
+    def dismiss(self, video_id: str, *, permanent: bool = False) -> None:
         with self._lock, self._db:
             self._db.execute("DELETE FROM review WHERE video_id = ?", (video_id,))
+            if permanent:
+                self._db.execute(
+                    "INSERT OR IGNORE INTO dismissed (video_id, created_at) VALUES (?, ?)",
+                    (video_id, _now()),
+                )
 
     def is_dismissed(self, video_id: str) -> bool:
         with self._lock:
@@ -534,6 +711,37 @@ class Library:
                 "SELECT 1 FROM dismissed WHERE video_id = ?", (video_id,)
             ).fetchone()
         return row is not None
+
+    def housekeep(
+        self,
+        *,
+        keep_days: int = 30,
+        keep_jobs: int = 500,
+        now: datetime | None = None,
+    ) -> tuple[int, int]:
+        """Trim history pulls/items older than keep_days and finished jobs beyond keep_jobs."""
+        cutoff = ((now or datetime.now(timezone.utc)) - timedelta(days=keep_days)).isoformat(timespec="seconds")
+        with self._lock, self._db:
+            self._db.execute(
+                "DELETE FROM history_items WHERE pull_id IN "
+                "(SELECT id FROM history_pulls WHERE started_at < ?)",
+                (cutoff,),
+            )
+            pulls_deleted = self._db.execute(
+                "DELETE FROM history_pulls WHERE started_at < ?",
+                (cutoff,),
+            ).rowcount
+            jobs_deleted = 0
+            if keep_jobs >= 0:
+                jobs_deleted = self._db.execute(
+                    "DELETE FROM jobs WHERE status IN ('succeeded', 'failed') "
+                    "AND id NOT IN ("
+                    "SELECT id FROM jobs WHERE status IN ('succeeded', 'failed') "
+                    "ORDER BY id DESC LIMIT ?"
+                    ")",
+                    (keep_jobs,),
+                ).rowcount
+        return pulls_deleted, jobs_deleted
 
     # History
 

@@ -12,6 +12,7 @@ from keo.config import (
     BUTTONS,
     FORMATS,
     LYRICS_PROVIDERS,
+    RECYCLE_DAYS,
     RESTRICT,
     ConfigError,
     SpotdlSettings,
@@ -20,6 +21,7 @@ from keo.config import (
     is_premium,
     save_choice,
     save_cookie_file,
+    save_recycle_days,
 )
 from keo.web.deps import TEMPLATES, get_services, require_page
 
@@ -104,6 +106,22 @@ def _context(request: Request, error: str | None = None) -> dict:
         warnings.append(f"bitrate is {settings.bitrate}, which needs a cookie file")
     groups = [_group(settings, ready, *choice) for choice in _CHOICES]
     groups += [_group(settings, ready, title, name, ("true", "false")) for title, name in _FLAG_TITLES]
+    groups.append(
+        {
+            "title": "Trash retention (days)",
+            "choices": [
+                {
+                    "name": "recycle_days",
+                    "value": value,
+                    "label": "Never" if value == "0" else value,
+                    "active": str(services.recycle_days) == value,
+                    "disabled": False,
+                    "premium": False,
+                }
+                for value in RECYCLE_DAYS
+            ],
+        }
+    )
     return {
         "auth_error": auth_error,
         "gaps": gaps,
@@ -127,8 +145,9 @@ async def save_settings(request: Request):
             request, "settings.html", _context(request, "Kéo has no config file."), status_code=400
         )
     form = await request.form()
+    valid_keys = set(BUTTONS) | {"recycle_days"}
     posted = [
-        (key, value) for key, value in form.items() if key in BUTTONS and isinstance(value, str)
+        (key, value) for key, value in form.items() if key in valid_keys and isinstance(value, str)
     ]
     if len(posted) != 1:
         return TEMPLATES.TemplateResponse(
@@ -136,7 +155,11 @@ async def save_settings(request: Request):
         )
     name, value = posted[0]
     try:
-        updated = save_choice(services.config_path, services.spotdl.settings, name, value)
+        if name == "recycle_days":
+            services.recycle_days = save_recycle_days(services.config_path, value)
+        else:
+            updated = save_choice(services.config_path, services.spotdl.settings, name, value)
+            services.spotdl.use(updated)
     except ConfigError as exc:
         return TEMPLATES.TemplateResponse(
             request, "settings.html", _context(request, str(exc)), status_code=400
@@ -148,7 +171,6 @@ async def save_settings(request: Request):
             _context(request, f"keo.toml could not be saved: {exc}"),
             status_code=400,
         )
-    services.spotdl.use(updated)
     return RedirectResponse("/settings", status_code=303)
 
 

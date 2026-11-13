@@ -10,8 +10,9 @@ from keo.config import cookie_ready
 from keo.cookies import CookieGate, settings_are_premium
 from keo.library import Job, Library, list_audio
 from keo.match import Name, is_close
+from keo.scan import refresh_song_cache
 from keo.spotdl_cmd import Spotdl
-from keo.youtube_dl import Runner, download_youtube_audio
+from keo.youtube_dl import Runner, download_youtube_audio, write_tags
 
 log = logging.getLogger(__name__)
 IDLE_WAIT_SECONDS = 5
@@ -131,12 +132,14 @@ class Worker:
             return
 
         before = list_audio(self._music) if self._music else set()
-        result = self._spotdl.download(url, spotify_id)
+        result = self._spotdl.download(url, spotify_id, video_id=job.video_id)
         if result.ok:
             self._library.mark_owned(job.video_id, job.artist, job.title, spotify_id)
             appeared = list_audio(self._music) - before if self._music else set()
             if spotify_id and len(appeared) == 1:
-                self._library.set_audio_path(spotify_id, str(appeared.pop()))
+                path = appeared.pop()
+                self._library.set_audio_path(spotify_id, str(path))
+                refresh_song_cache(self._library, "spotify", spotify_id, path)
             self._library.finish(job.id, ok=True)
         else:
             self._library.finish(job.id, ok=False, error=result.output)
@@ -153,13 +156,18 @@ class Worker:
             music_dir=self._music or Path("music"),
             audio_format=job.format or self._spotdl.settings.format or "mp3",
             cookie_file=self._spotdl.settings.cookie_file if self._spotdl.settings.cookie_file else None,
+            output_template=self._spotdl.settings.output_template,
+            max_filename_length=self._spotdl.settings.max_filename_length,
             **kwargs,
         )
         if result.ok:
             self._library.mark_owned(job.video_id, job.artist, job.title, None)
             appeared = list_audio(self._music) - before if self._music else set()
             if len(appeared) == 1:
-                self._library.set_audio_path(job.video_id, str(appeared.pop()))
+                path = appeared.pop()
+                write_tags(path, artist=job.artist, title=job.title)
+                self._library.set_audio_path(job.video_id, str(path))
+                refresh_song_cache(self._library, "video", job.video_id, path)
             self._library.finish(job.id, ok=True)
         else:
             self._library.finish(job.id, ok=False, error=result.output)

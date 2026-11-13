@@ -172,3 +172,36 @@ def load(path: Path) -> AudioView | None:
     with _lock:
         _cache[key] = view
     return view
+
+
+def cover_bytes(path: Path) -> tuple[bytes, str] | None:
+    try:
+        from mutagen import File
+    except ImportError:
+        return None
+    try:
+        audio = File(path)
+    except Exception:
+        return None
+    if audio is None:
+        return None
+    pictures = getattr(audio, "pictures", None) or []
+    if pictures:
+        return pictures[0].data, pictures[0].mime or "image/jpeg"
+    tags = getattr(audio, "tags", None)
+    if not tags:
+        return None
+    block = tags.get("metadata_block_picture") if hasattr(tags, "get") else None
+    if block:
+        import base64
+        from mutagen.flac import Picture
+        picture = Picture(base64.b64decode(block[0]))
+        return picture.data, picture.mime or "image/jpeg"
+    covr = tags.get("covr") if hasattr(tags, "get") else None
+    if covr:
+        return bytes(covr[0]), "image/jpeg"
+    for key in tags.keys():
+        if str(key).startswith("APIC"):
+            frame = tags[key]
+            return frame.data, getattr(frame, "mime", None) or "image/jpeg"
+    return None
