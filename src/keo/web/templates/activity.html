@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Activity{% endblock %}
+{% block content %}
+<h2 class="page-title mb-3">Activity</h2>
+<div class="card">
+  <ul class="list-group list-group-flush">
+  {% for ev in events %}
+    <li class="list-group-item d-flex align-items-center justify-content-between">
+      <div>
+        <div class="fw-bold">{{ ev.song }}</div>
+        <div class="text-secondary small">{{ ev.time }}{% if ev.detail %} · {{ ev.detail }}{% endif %}</div>
+      </div>
+      <span class="badge bg-secondary-lt">{{ ev.kind }}</span>
+    </li>
+  {% else %}
+    <li class="list-group-item text-secondary">No activity recorded yet.</li>
+  {% endfor %}
+  </ul>
+</div>
+{% endblock %}
+

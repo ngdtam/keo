@@ -175,3 +175,65 @@ def test_settings_saves_recycle_days(page, config_file):
     assert resp.status_code == 303
     assert "recycle_days = 30" in config_file.read_text(encoding="utf-8")
     assert page.app.state.services.recycle_days == 30
+
+
+def test_settings_integrations_saves_urls(page, config_file):
+    resp = page.post(
+        "/settings/integrations",
+        data={
+            "notify_url": "https://ntfy.sh/keo-alerts",
+            "media_refresh_url": "http://localhost:4533/rest/startScan",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert page.app.state.services.notify_url == "https://ntfy.sh/keo-alerts"
+    assert page.app.state.services.media_refresh_url == "http://localhost:4533/rest/startScan"
+    text = config_file.read_text(encoding="utf-8")
+    assert "https://ntfy.sh/keo-alerts" in text
+    assert "http://localhost:4533/rest/startScan" in text
+
+
+def test_settings_shows_system_health_and_runs_backup(page, tmp_path):
+    res = page.get("/settings")
+    assert res.status_code == 200
+    assert "System" in res.text
+    assert "yt-dlp" in res.text
+    assert "Run backup now" in res.text
+
+    backup_res = page.post("/settings/backup", follow_redirects=False)
+    assert backup_res.status_code == 303
+    backups = list((page.app.state.services.data_dir / "backups").iterdir())
+    assert len(backups) == 1
+    assert (backups[0] / "keo.db").is_file()
+
+
+def test_settings_check_updates_renders_latest_versions(page, monkeypatch):
+    monkeypatch.setattr(
+        "keo.web.routes_settings.check_package_updates",
+        lambda: {
+            "yt-dlp": ("2026.10.21", "2026.11.10", True),
+            "ytmusicapi": ("1.12.4", "1.12.4", False),
+            "spotdl": ("4.6.0", "4.6.0", False),
+            "pymediainfo": ("7.0.1", "7.0.2", True),
+        },
+    )
+    resp = page.post("/settings/check-updates")
+    assert resp.status_code == 200
+    assert "yt-dlp:" in resp.text and "latest 2026.11.10" in resp.text
+    assert "ytmusicapi:" in resp.text and "up to date" in resp.text
+    assert "spotdl:" in resp.text and "up to date" in resp.text
+    assert "mediainfo (pymediainfo):" in resp.text and "latest 7.0.2" in resp.text
+
+
+def test_settings_shows_scheduled_tasks_and_runs_one(page, library):
+    res = page.get("/settings")
+    assert res.status_code == 200
+    assert "Scheduled tasks" in res.text
+    assert "housekeeping" in res.text
+    assert "backup" in res.text
+
+    run_res = page.post("/settings/tasks/housekeeping/run", follow_redirects=False)
+    assert run_res.status_code == 303
+    tasks = {t.name: t for t in library.list_tasks()}
+    assert tasks["housekeeping"].last_run is not None

@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from keo.audio_info import AudioView, cover_bytes, load as load_audio_info
-from keo.library import Library, list_audio
+from keo.library import Library, inside_music, list_audio
+from keo.youtube_dl import format_output_template
 
 
 @dataclass(frozen=True)
@@ -122,4 +123,63 @@ def refresh_song_cache(
     except OSError:
         return
     _cache_song(library, song.id, path, st, audio_loader, cover_checker)
+
+
+def plan_organize(
+    music_dir: Path,
+    library: Library,
+    output_template: str,
+    *,
+    max_length: int = 0,
+) -> list[tuple[object, Path, Path]]:
+    """Return planned (song, src, target) renames without touching disk."""
+    if not music_dir.is_dir():
+        return []
+    planned: list[tuple[object, Path, Path]] = []
+    for song in library.list_songs():
+        if not song.audio_path or not song.artist or not song.title:
+            continue
+        src = Path(song.audio_path)
+        if not src.is_file() or not inside_music(music_dir, src):
+            continue
+        rel = format_output_template(
+            output_template, song.artist, song.title, max_length=max_length
+        ).removesuffix(".%(ext)s")
+        target = music_dir / f"{rel}{src.suffix}"
+        if target == src or not inside_music(music_dir, target) or target.exists():
+            continue
+        planned.append((song, src, target))
+    return planned
+
+
+def organize_library(
+    music_dir: Path,
+    library: Library,
+    output_template: str,
+    *,
+    max_length: int = 0,
+) -> int:
+    """Rename and move library audio files (plus .lrc sidecars) to match output_template."""
+    moved = 0
+    for song, src, target in plan_organize(
+        music_dir, library, output_template, max_length=max_length
+    ):
+        if target.exists():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        src.replace(target)
+        lrc = src.with_suffix(".lrc")
+        lrc_target = target.with_suffix(".lrc")
+        if lrc.is_file() and not lrc_target.exists():
+            lrc.replace(lrc_target)
+        library.set_song_audio_path(song.id, str(target))
+        parent = src.parent
+        while parent != music_dir and parent.is_dir():
+            try:
+                parent.rmdir()
+            except OSError:
+                break
+            parent = parent.parent
+        moved += 1
+    return moved
 

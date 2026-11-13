@@ -5,13 +5,16 @@ from __future__ import annotations
 import logging
 from dataclasses import asdict
 from datetime import datetime, timezone
+from typing import Annotated
+from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
-from keo.history import decide, run_pull
+from keo.catalog import CatalogError
+from keo.history import decide, run_pull, sync_followed_artists, sync_watched_playlists
 from keo.library import Job
 from keo.web.deps import TEMPLATES, get_services, require_api, require_download, require_page
 
@@ -55,8 +58,161 @@ def api_download(request: Request, body: DownloadRequest):
 
 @router.get("/review", **PAGE)
 def review_page(request: Request):
-    rows = get_services(request).library.list_review()
-    return TEMPLATES.TemplateResponse(request, "review.html", {"rows": rows})
+    lib = get_services(request).library
+    return TEMPLATES.TemplateResponse(
+        request,
+        "review.html",
+        {
+            "rows": lib.list_review(),
+            "watched": lib.list_watched_playlists(),
+            "artists": lib.list_followed_artists(),
+        },
+    )
+
+
+@router.get("/review/{video_id}/pick", **PAGE)
+def review_pick_page(request: Request, video_id: str, q: str = ""):
+    services = get_services(request)
+    row = services.library.get_review(video_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Unknown review song")
+    query = q.strip() or f"{row.heard_artist} {row.heard_title}".strip()
+    candidates = []
+    error = ""
+    if query:
+        try:
+            candidates = services.catalog.search(query)[:5]
+        except CatalogError as exc:
+            error = str(exc)
+    return TEMPLATES.TemplateResponse(
+        request,
+        "review_pick.html",
+        {"row": row, "query": query, "candidates": candidates, "error": error},
+    )
+
+
+@router.post("/review/{video_id}/pick", **PAGE)
+def review_pick_submit(
+    request: Request,
+    video_id: str,
+    chosen_video_id: Annotated[str, Form()],
+    artist: Annotated[str, Form()],
+    title: Annotated[str, Form()],
+):
+    services = get_services(request)
+    require_download(services)
+    services.worker.submit(chosen_video_id.strip(), artist.strip(), title.strip(), source="review")
+    services.library.dismiss(video_id)
+    return RedirectResponse("/review", status_code=303)
+
+
+def _extract_playlist_id(raw: str) -> str:
+    value = raw.strip()
+    if "://" in value or "list=" in value:
+        query = parse_qs(urlparse(value).query)
+        if query.get("list"):
+            return query["list"][0].strip()
+    return value
+
+
+@router.post("/review/playlists/watch", **PAGE)
+def watch_playlist_route(
+    request: Request,
+    playlist_id: Annotated[str, Form()],
+    auto_queue: Annotated[bool, Form()] = False,
+):
+    services = get_services(request)
+    pid = _extract_playlist_id(playlist_id)
+    if not pid:
+        return RedirectResponse("/review", status_code=303)
+    title = "Liked Music" if pid in {"LM", "liked"} else pid
+    try:
+        fetched_title, _ = services.catalog.playlist(pid)
+        if fetched_title:
+            title = fetched_title
+    except CatalogError:
+        pass
+    services.library.watch_playlist(pid, title, auto_queue=auto_queue)
+    return RedirectResponse("/review", status_code=303)
+
+
+@router.post("/review/playlists/sync", **PAGE)
+def sync_watched_playlists_route(request: Request):
+    services = get_services(request)
+    sync_watched_playlists(
+        catalog=services.catalog, library=services.library, worker=services.worker
+    )
+    return RedirectResponse("/review", status_code=303)
+
+
+@router.post("/review/playlists/{playlist_id}/unwatch", **PAGE)
+def unwatch_playlist_route(request: Request, playlist_id: str):
+    get_services(request).library.unwatch_playlist(playlist_id)
+    return RedirectResponse("/review", status_code=303)
+
+
+def _extract_channel_id(raw: str) -> str | None:
+    value = raw.strip()
+    if "/channel/" in value:
+        part = value.split("/channel/", 1)[1].split("/", 1)[0].split("?", 1)[0].strip()
+        if part:
+            return part
+    if value.startswith("UC") and " " not in value and len(value) >= 16:
+        return value
+    return None
+
+
+@router.post("/review/artists/follow", **PAGE)
+def follow_artist_route(request: Request, artist: Annotated[str, Form()]):
+    services = get_services(request)
+    query = artist.strip()
+    if not query:
+        return RedirectResponse("/review", status_code=303)
+    cid = _extract_channel_id(query)
+    name = query
+    try:
+        if cid is None:
+            found = services.catalog.find_artist(query)
+            if found is None:
+                return RedirectResponse("/review", status_code=303)
+            cid, name = found
+        else:
+            fetched_name, _ = services.catalog.artist_releases(cid)
+            if fetched_name:
+                name = fetched_name
+    except CatalogError:
+        if cid is None:
+            return RedirectResponse("/review", status_code=303)
+    services.library.follow_artist(cid, name)
+    return RedirectResponse("/review", status_code=303)
+
+
+@router.post("/review/artists/sync", **PAGE)
+def sync_followed_artists_route(request: Request):
+    services = get_services(request)
+    sync_followed_artists(catalog=services.catalog, library=services.library)
+    return RedirectResponse("/review", status_code=303)
+
+
+@router.post("/review/artists/{channel_id}/unfollow", **PAGE)
+def unfollow_artist_route(request: Request, channel_id: str):
+    get_services(request).library.unfollow_artist(channel_id)
+    return RedirectResponse("/review", status_code=303)
+
+
+@router.get("/activity", **PAGE)
+def activity_page(request: Request):
+    services = get_services(request)
+    events = [
+        {
+            "time": format_job_time(ev.created_at, services.timezone),
+            "song": ev.song,
+            "kind": ev.kind,
+            "detail": ev.detail,
+        }
+        for ev in services.library.list_events()
+    ]
+    return TEMPLATES.TemplateResponse(request, "activity.html", {"events": events})
 
 
 @router.get("/api/review", **API)

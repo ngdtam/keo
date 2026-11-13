@@ -24,7 +24,13 @@ AUDIO_EXT = {".mp3", ".m4a", ".opus", ".ogg", ".flac", ".wav"}
 def list_audio(folder: Path) -> set[Path]:
     if not folder.is_dir():
         return set()
-    return {path for path in folder.iterdir() if path.is_file() and path.suffix.lower() in AUDIO_EXT}
+    return {
+        path
+        for path in folder.rglob("*")
+        if path.is_file()
+        and path.suffix.lower() in AUDIO_EXT
+        and ".recycle" not in path.relative_to(folder).parts
+    }
 
 
 def unique_title_file(folder: Path, titles: set[str]) -> Path | None:
@@ -111,6 +117,31 @@ CREATE TABLE IF NOT EXISTS dismissed (
     video_id TEXT PRIMARY KEY,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS watched_playlists (
+    playlist_id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    auto_queue INTEGER NOT NULL DEFAULT 0,
+    last_synced_at TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS followed_artists (
+    channel_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    last_synced_at TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS events (
+    id INTEGER PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    song TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS scheduled_tasks (
+    name TEXT PRIMARY KEY,
+    interval_hours INTEGER NOT NULL,
+    last_run TEXT
+);
 """
 
 
@@ -169,6 +200,47 @@ class HeardCount:
     plays: int
 
 
+@dataclass(frozen=True)
+class WatchedPlaylist:
+    playlist_id: str
+    title: str
+    auto_queue: bool
+    last_synced_at: str | None
+    created_at: str
+
+
+@dataclass(frozen=True)
+class FollowedArtist:
+    channel_id: str
+    name: str
+    last_synced_at: str | None
+    created_at: str
+
+
+@dataclass(frozen=True)
+class Event:
+    id: int
+    created_at: str
+    song: str
+    kind: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class HistoryPull:
+    id: int
+    started_at: str
+    status: str
+    error: str | None
+
+
+@dataclass(frozen=True)
+class ScheduledTask:
+    name: str
+    interval_hours: int
+    last_run: str | None
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -203,7 +275,7 @@ def _artist_in_filename(artist: str, audio_path: str) -> bool:
     return bool(artist_norm) and (artist_norm in filename_norm or f" {artist_norm} " in f" {filename_norm} ")
 
 
-LATEST_VERSION = 2
+LATEST_VERSION = 6
 
 
 def _row_to_song(row: sqlite3.Row) -> Song:
@@ -281,6 +353,18 @@ class Library:
                     if col not in song_columns:
                         self._db.execute(f"ALTER TABLE songs ADD COLUMN {col} {col_type}")
                 self._db.execute("PRAGMA user_version = 2")
+        if version < 3:
+            with self._db:
+                self._db.execute("PRAGMA user_version = 3")
+        if version < 4:
+            with self._db:
+                self._db.execute("PRAGMA user_version = 4")
+        if version < 5:
+            with self._db:
+                self._db.execute("PRAGMA user_version = 5")
+        if version < 6:
+            with self._db:
+                self._db.execute("PRAGMA user_version = 6")
 
     def _accept_close_match_review(self) -> None:
         row = self._db.execute(
@@ -503,6 +587,46 @@ class Library:
         assert row is not None
         return _row_to_song(row)
 
+    def link_song(self, song_id: int, video_id: str, artist: str, title: str) -> Song | None:
+        norm_artist = normalize(artist)
+        norm_title = normalize(title)
+        with self._lock, self._db:
+            src = self._db.execute("SELECT * FROM songs WHERE id = ?", (song_id,)).fetchone()
+            if src is None:
+                return None
+            existing = self._db.execute(
+                "SELECT * FROM songs WHERE video_id = ? AND id != ?", (video_id, song_id)
+            ).fetchone()
+            if existing is not None:
+                self._db.execute(
+                    "UPDATE songs SET audio_path = COALESCE(audio_path, ?),"
+                    " audio_mtime = COALESCE(audio_mtime, ?),"
+                    " audio_size = COALESCE(audio_size, ?),"
+                    " audio_card = COALESCE(audio_card, ?),"
+                    " audio_details = COALESCE(audio_details, ?),"
+                    " has_cover = COALESCE(has_cover, ?)"
+                    " WHERE id = ?",
+                    (
+                        src["audio_path"],
+                        src["audio_mtime"],
+                        src["audio_size"],
+                        src["audio_card"],
+                        src["audio_details"],
+                        src["has_cover"],
+                        existing["id"],
+                    ),
+                )
+                self._db.execute("DELETE FROM songs WHERE id = ?", (song_id,))
+                row = self._db.execute("SELECT * FROM songs WHERE id = ?", (existing["id"],)).fetchone()
+            else:
+                self._db.execute(
+                    "UPDATE songs SET video_id = ?, artist = ?, title = ?, artist_key = ?, title_key = ?"
+                    " WHERE id = ?",
+                    (video_id, artist, title, norm_artist, norm_title, song_id),
+                )
+                row = self._db.execute("SELECT * FROM songs WHERE id = ?", (song_id,)).fetchone()
+        return _row_to_song(row) if row is not None else None
+
     def set_audio_cache(
         self,
         song_id: int,
@@ -519,6 +643,13 @@ class Library:
                 "UPDATE songs SET audio_path = ?, audio_mtime = ?, audio_size = ?,"
                 " audio_card = ?, audio_details = ?, has_cover = ? WHERE id = ?",
                 (audio_path, mtime, size, card, json.dumps(details), int(has_cover), song_id),
+            )
+
+    def set_song_audio_path(self, song_id: int, audio_path: str) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "UPDATE songs SET audio_path = ? WHERE id = ?",
+                (audio_path, song_id),
             )
 
     def clear_missing_audio(self, existing_paths: set[str]) -> int:
@@ -712,6 +843,115 @@ class Library:
             ).fetchone()
         return row is not None
 
+    # Watched playlists
+
+    def watch_playlist(self, playlist_id: str, title: str, *, auto_queue: bool = False) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT INTO watched_playlists (playlist_id, title, auto_queue, created_at)"
+                " VALUES (?, ?, ?, ?)"
+                " ON CONFLICT(playlist_id) DO UPDATE SET title = excluded.title, auto_queue = excluded.auto_queue",
+                (playlist_id, title, int(auto_queue), _now()),
+            )
+
+    def unwatch_playlist(self, playlist_id: str) -> None:
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM watched_playlists WHERE playlist_id = ?", (playlist_id,))
+
+    def list_watched_playlists(self) -> list[WatchedPlaylist]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT playlist_id, title, auto_queue, last_synced_at, created_at"
+                " FROM watched_playlists ORDER BY created_at"
+            ).fetchall()
+        return [
+            WatchedPlaylist(
+                playlist_id=row["playlist_id"],
+                title=row["title"],
+                auto_queue=bool(row["auto_queue"]),
+                last_synced_at=row["last_synced_at"],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
+
+    def set_watched_playlist_synced(
+        self, playlist_id: str, synced_at: str, *, title: str | None = None
+    ) -> None:
+        with self._lock, self._db:
+            if title:
+                self._db.execute(
+                    "UPDATE watched_playlists SET last_synced_at = ?, title = ? WHERE playlist_id = ?",
+                    (synced_at, title, playlist_id),
+                )
+            else:
+                self._db.execute(
+                    "UPDATE watched_playlists SET last_synced_at = ? WHERE playlist_id = ?",
+                    (synced_at, playlist_id),
+                )
+
+    # Followed artists
+
+    def follow_artist(self, channel_id: str, name: str) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT INTO followed_artists (channel_id, name, created_at) VALUES (?, ?, ?)"
+                " ON CONFLICT(channel_id) DO UPDATE SET name = excluded.name",
+                (channel_id, name, _now()),
+            )
+
+    def unfollow_artist(self, channel_id: str) -> None:
+        with self._lock, self._db:
+            self._db.execute("DELETE FROM followed_artists WHERE channel_id = ?", (channel_id,))
+
+    def list_followed_artists(self) -> list[FollowedArtist]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT channel_id, name, last_synced_at, created_at"
+                " FROM followed_artists ORDER BY created_at"
+            ).fetchall()
+        return [
+            FollowedArtist(
+                channel_id=row["channel_id"],
+                name=row["name"],
+                last_synced_at=row["last_synced_at"],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
+
+    def set_followed_artist_synced(
+        self, channel_id: str, synced_at: str, *, name: str | None = None
+    ) -> None:
+        with self._lock, self._db:
+            if name:
+                self._db.execute(
+                    "UPDATE followed_artists SET last_synced_at = ?, name = ? WHERE channel_id = ?",
+                    (synced_at, name, channel_id),
+                )
+            else:
+                self._db.execute(
+                    "UPDATE followed_artists SET last_synced_at = ? WHERE channel_id = ?",
+                    (synced_at, channel_id),
+                )
+
+    # Activity events
+
+    def record_event(self, song: str, kind: str, detail: str = "") -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT INTO events (created_at, song, kind, detail) VALUES (?, ?, ?, ?)",
+                (_now(), song, kind, detail),
+            )
+
+    def list_events(self, limit: int = 200) -> list[Event]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT id, created_at, song, kind, detail FROM events ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [Event(**dict(row)) for row in rows]
+
     def housekeep(
         self,
         *,
@@ -731,6 +971,7 @@ class Library:
                 "DELETE FROM history_pulls WHERE started_at < ?",
                 (cutoff,),
             ).rowcount
+            self._db.execute("DELETE FROM events WHERE created_at < ?", (cutoff,))
             jobs_deleted = 0
             if keep_jobs >= 0:
                 jobs_deleted = self._db.execute(
@@ -774,6 +1015,16 @@ class Library:
             ).fetchone()
         return row is not None
 
+    def last_pull(self) -> HistoryPull | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT id, started_at, status, error FROM history_pulls"
+                " ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        if row is None:
+            return None
+        return HistoryPull(row[0], row[1], row[2], row[3])
+
     def count_recent(
         self, pull_id: int, labels: tuple[str, ...] = RECENT_PLAYED_LABELS
     ) -> list[HeardCount]:
@@ -791,6 +1042,35 @@ class Library:
 
     def count_today(self, pull_id: int) -> list[HeardCount]:
         return self.count_recent(pull_id, labels=("Today",))
+
+    def record_task_run(self, name: str, interval_hours: int) -> None:
+        with self._lock, self._db:
+            self._db.execute(
+                "INSERT INTO scheduled_tasks (name, interval_hours, last_run)"
+                " VALUES (?, ?, ?)"
+                " ON CONFLICT(name) DO UPDATE SET"
+                " interval_hours = excluded.interval_hours,"
+                " last_run = excluded.last_run",
+                (name, interval_hours, _now()),
+            )
+
+    def list_tasks(self) -> list[ScheduledTask]:
+        defaults = [
+            ("history_pull", 24),
+            ("library_scan", 24),
+            ("housekeeping", 24),
+            ("recycle_sweep", 24),
+            ("backup", 168),
+        ]
+        with self._lock:
+            rows = {
+                row["name"]: ScheduledTask(row["name"], row["interval_hours"], row["last_run"])
+                for row in self._db.execute("SELECT name, interval_hours, last_run FROM scheduled_tasks")
+            }
+        return [
+            rows.get(name, ScheduledTask(name, hours, None))
+            for name, hours in defaults
+        ]
 
     # Helpers that expect the lock to be held
 

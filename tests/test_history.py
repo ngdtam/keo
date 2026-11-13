@@ -275,3 +275,50 @@ def test_dismiss_permanent_skips_future_history_pulls(catalog, library, worker, 
     assert library.is_dismissed("vid_never")
     pull(catalog, library, worker, spotdl)
     assert library.get_review("vid_never") is None
+
+
+def test_sync_watched_playlists_adds_to_review_or_auto_queues(catalog, library, worker):
+    from keo.history import sync_watched_playlists
+    from keo.records import SongRow
+
+    catalog.songs = [
+        SongRow("vid_owned", "Owned", ("A",), "Album"),
+        SongRow("vid_dismissed", "Dismissed", ("B",), "Album"),
+        SongRow("vid_new", "New Song", ("C",), "Album"),
+    ]
+    library.mark_owned("vid_owned", "A", "Owned", "sp_owned")
+    library.dismiss("vid_dismissed", permanent=True)
+    library.watch_playlist("PL_review", "Review List", auto_queue=False)
+
+    added = sync_watched_playlists(catalog=catalog, library=library, worker=worker)
+    assert added == 1
+    assert library.get_review("vid_new") is not None
+    assert library.get_review("vid_owned") is None
+    assert library.get_review("vid_dismissed") is None
+
+    library.unwatch_playlist("PL_review")
+    library.dismiss("vid_new")
+    library.watch_playlist("LM", "Liked Music", auto_queue=True)
+    added2 = sync_watched_playlists(catalog=catalog, library=library, worker=worker)
+    assert added2 == 1
+    assert library.active_job("vid_new") is not None
+
+
+def test_sync_followed_artists_adds_new_releases_to_review(catalog, library):
+    from keo.history import sync_followed_artists
+    from keo.records import SongRow
+
+    catalog.songs = [
+        SongRow("vid_owned", "Owned", ("Sơn Tùng M-TP",), "Album"),
+        SongRow("vid_dismissed", "Dismissed", ("Sơn Tùng M-TP",), "Album"),
+        SongRow("vid_release", "Come My Way", ("Sơn Tùng M-TP",), "Come My Way"),
+    ]
+    library.mark_owned("vid_owned", "Sơn Tùng M-TP", "Owned", "sp1")
+    library.dismiss("vid_dismissed", permanent=True)
+    library.follow_artist("UC3muIvzjhubNpJ4Pn_0kCQw", "Sơn Tùng M-TP")
+
+    added = sync_followed_artists(catalog=catalog, library=library)
+    assert added == 1
+    assert library.get_review("vid_release") is not None
+    assert library.get_review("vid_owned") is None
+    assert library.get_review("vid_dismissed") is None

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request, UploadFile
+from fastapi import APIRouter, Depends, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
+from typing import Annotated
 
 from keo.config import (
     ALBUM_TYPES,
@@ -21,7 +22,17 @@ from keo.config import (
     is_premium,
     save_choice,
     save_cookie_file,
+    save_integrations,
     save_recycle_days,
+)
+from keo.history import run_pull
+from keo.recycle import cleanup_recycle
+from keo.scan import scan
+from keo.system import (
+    backup_data,
+    check_package_updates,
+    last_backup_date,
+    run_health_checks,
 )
 from keo.web.deps import TEMPLATES, get_services, require_page
 
@@ -122,10 +133,21 @@ def _context(request: Request, error: str | None = None) -> dict:
             ],
         }
     )
+    backoff = services.worker.backoff_status()
+    backoff_line = ""
+    if backoff["active"]:
+        mins = max(1, (backoff["seconds_remaining"] + 59) // 60)
+        backoff_line = f"Worker paused for ~{mins}m ({backoff['reason']})"
     return {
         "auth_error": auth_error,
         "gaps": gaps,
         "cookie_line": services.cookies.line(settings),
+        "backoff_line": backoff_line,
+        "notify_url": services.notify_url,
+        "media_refresh_url": services.media_refresh_url,
+        "health_checks": run_health_checks(services),
+        "last_backup": last_backup_date(services.data_dir) if services.data_dir else None,
+        "tasks": services.library.list_tasks(),
         "warnings": warnings,
         "groups": groups,
         "error": error,
@@ -217,4 +239,72 @@ def check_cookie(request: Request):
     settings = services.spotdl.settings
     if cookie_ready(settings):
         services.cookies.check(settings.cookie_file)
+    return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/integrations", **PAGE)
+def save_integrations_route(
+    request: Request,
+    notify_url: Annotated[str, Form()] = "",
+    media_refresh_url: Annotated[str, Form()] = "",
+):
+    services = get_services(request)
+    if services.config_path is None:
+        return TEMPLATES.TemplateResponse(
+            request, "settings.html", _context(request, "Kéo has no config file."), status_code=400
+        )
+    try:
+        notify, refresh = save_integrations(services.config_path, notify_url, media_refresh_url)
+    except ConfigError as exc:
+        return TEMPLATES.TemplateResponse(
+            request, "settings.html", _context(request, str(exc)), status_code=400
+        )
+    services.notify_url = notify
+    services.media_refresh_url = refresh
+    return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/backup", **PAGE)
+def run_backup_route(request: Request):
+    services = get_services(request)
+    if services.data_dir is not None:
+        backup_data(services.data_dir, services.config_path)
+    return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/check-updates", **PAGE)
+def check_updates_route(request: Request):
+    services = get_services(request)
+    services.package_updates = check_package_updates()
+    return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/tasks/{name}/run", **PAGE)
+def run_task_route(request: Request, name: str):
+    services = get_services(request)
+    if name == "history_pull":
+        run_pull(
+            catalog=services.catalog,
+            library=services.library,
+            worker=services.worker,
+            spotdl=services.spotdl,
+            cookies=services.cookies,
+            progress=services.history_progress,
+        )
+        services.library.record_task_run("history_pull", 24)
+    elif name == "library_scan":
+        if services.music_dir is not None:
+            scan(services.music_dir, services.library)
+        services.library.record_task_run("library_scan", 24)
+    elif name == "recycle_sweep":
+        if services.music_dir is not None:
+            cleanup_recycle(services.music_dir, services.recycle_days)
+        services.library.record_task_run("recycle_sweep", 24)
+    elif name == "housekeeping":
+        services.library.housekeep()
+        services.library.record_task_run("housekeeping", 24)
+    elif name == "backup":
+        if services.data_dir is not None:
+            backup_data(services.data_dir, services.config_path)
+        services.library.record_task_run("backup", 168)
     return RedirectResponse("/settings", status_code=303)

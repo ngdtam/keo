@@ -27,6 +27,9 @@
           <button type="button" class="btn" data-post="/api/review/{{ row.video_id | urlencode }}/download">
             Download
           </button>
+          <a href="/review/{{ row.video_id | urlencode }}/pick" class="btn btn-outline-secondary">
+            Pick match
+          </a>
           <button type="button" class="btn btn-outline-secondary" data-dismiss="/api/review/{{ row.video_id | urlencode }}/dismiss">
             Dismiss
           </button>
@@ -38,6 +41,97 @@
     </li>
   {% else %}
     <li class="list-group-item" id="empty-review">Nothing to review.</li>
+  {% endfor %}
+  </ul>
+</div>
+
+<div class="row align-items-center mt-4 mb-2">
+  <div class="col">
+    <h3 class="mb-0">Watched playlists</h3>
+  </div>
+  <div class="col-auto d-flex gap-2">
+    <form method="post" action="/review/playlists/watch" class="mb-0">
+      <input type="hidden" name="playlist_id" value="LM">
+      <button type="submit" class="btn">Watch Liked songs</button>
+    </form>
+    <form method="post" action="/review/playlists/sync" class="mb-0">
+      <button type="submit" class="btn">Sync playlists now</button>
+    </form>
+  </div>
+</div>
+<div class="card">
+  <div class="card-body">
+    <form method="post" action="/review/playlists/watch" class="row g-2 align-items-center">
+      <div class="col">
+        <input type="text" name="playlist_id" class="form-control" placeholder="YouTube Music playlist ID or URL" required>
+      </div>
+      <div class="col-auto">
+        <label class="form-check mb-0">
+          <input type="checkbox" name="auto_queue" value="1" class="form-check-input">
+          <span class="form-check-label">Auto-download</span>
+        </label>
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn">Watch</button>
+      </div>
+    </form>
+  </div>
+  <ul class="list-group list-group-flush">
+  {% for wp in watched %}
+    <li class="list-group-item d-flex align-items-center justify-content-between">
+      <div>
+        <div class="fw-bold">{{ wp.title }} <span class="text-secondary small">({{ wp.playlist_id }})</span></div>
+        <div class="text-secondary small">
+          {{ "Auto-download" if wp.auto_queue else "Send to review" }}
+          {% if wp.last_synced_at %} · Synced {{ wp.last_synced_at }}{% endif %}
+        </div>
+      </div>
+      <form method="post" action="/review/playlists/{{ wp.playlist_id | urlencode }}/unwatch" class="mb-0">
+        <button type="submit" class="btn btn-outline-secondary">Unwatch</button>
+      </form>
+    </li>
+  {% else %}
+    <li class="list-group-item text-secondary">No watched playlists yet.</li>
+  {% endfor %}
+  </ul>
+</div>
+
+<div class="row align-items-center mt-4 mb-2">
+  <div class="col">
+    <h3 class="mb-0">Followed artists</h3>
+  </div>
+  <div class="col-auto">
+    <form method="post" action="/review/artists/sync" class="mb-0">
+      <button type="submit" class="btn">Check artists now</button>
+    </form>
+  </div>
+</div>
+<div class="card">
+  <div class="card-body">
+    <form method="post" action="/review/artists/follow" class="row g-2 align-items-center">
+      <div class="col">
+        <input type="text" name="artist" class="form-control" placeholder="Artist name or YouTube Music channel ID / URL" required>
+      </div>
+      <div class="col-auto">
+        <button type="submit" class="btn">Follow</button>
+      </div>
+    </form>
+  </div>
+  <ul class="list-group list-group-flush">
+  {% for fa in artists %}
+    <li class="list-group-item d-flex align-items-center justify-content-between">
+      <div>
+        <div class="fw-bold">{{ fa.name }} <span class="text-secondary small">({{ fa.channel_id }})</span></div>
+        <div class="text-secondary small">
+          Sends new releases to review{% if fa.last_synced_at %} · Checked {{ fa.last_synced_at }}{% endif %}
+        </div>
+      </div>
+      <form method="post" action="/review/artists/{{ fa.channel_id | urlencode }}/unfollow" class="mb-0">
+        <button type="submit" class="btn btn-outline-secondary">Unfollow</button>
+      </form>
+    </li>
+  {% else %}
+    <li class="list-group-item text-secondary">No followed artists yet.</li>
   {% endfor %}
   </ul>
 </div>

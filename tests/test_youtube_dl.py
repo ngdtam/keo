@@ -115,3 +115,17 @@ def test_write_tags_sets_artist_and_title_and_ignores_bad_files(tmp_path, monkey
     assert fake_tags["title"] == ["Lối Nhỏ"]
     assert fake_tags["_saved"] is True
 
+
+def test_build_yt_dlp_args_supports_artist_subfolder_template(tmp_path):
+    music_dir = tmp_path / "music"
+    args = build_yt_dlp_args(
+        "abc1234",
+        "Low G",
+        "An Thần",
+        music_dir,
+        audio_format="mp3",
+        output_template="{artist}/{title}.{output-ext}",
+    )
+    out_arg = args[args.index("-o") + 1]
+    assert out_arg == str(music_dir / "Low G" / "An Thần.%(ext)s")
+

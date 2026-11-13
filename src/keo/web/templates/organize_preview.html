@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Preview Rename{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h2 class="page-title mb-0">Preview rename ({{ moves | length }})</h2>
+  <div class="d-flex gap-2">
+    <a href="/library" class="btn">Back</a>
+    {% if moves %}
+    <form method="post" action="/library/organize" class="mb-0">
+      <button type="submit" class="btn btn-primary">Apply rename</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+<div class="card">
+  <div class="table-responsive">
+    <table class="table card-table table-vcenter">
+      <thead>
+        <tr>
+          <th>Song</th>
+          <th>Current path</th>
+          <th>New path</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in moves %}
+        <tr>
+          <td>{{ m.artist }} - {{ m.title }}</td>
+          <td class="text-secondary">{{ m.src }}</td>
+          <td>{{ m.dst }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" class="text-secondary">All files already match the template.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+

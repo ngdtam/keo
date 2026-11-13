@@ -78,11 +78,20 @@ class Settings:
     history_hour: int
     config_path: Path
     recycle_days: int = DEFAULT_RECYCLE_DAYS
+    notify_url: str = ""
+    media_refresh_url: str = ""
 
 
 _DEFAULT_SPOTDL = SpotdlSettings()
 _SPOTDL_NAMES = tuple(field.name for field in fields(SpotdlSettings))
-_ALLOWED = {*_SPOTDL_NAMES, "history_timezone", "history_hour", "recycle_days"}
+_ALLOWED = {
+    *_SPOTDL_NAMES,
+    "history_timezone",
+    "history_hour",
+    "recycle_days",
+    "notify_url",
+    "media_refresh_url",
+}
 
 
 def load_settings(env: Mapping[str, str]) -> Settings:
@@ -101,7 +110,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
             "KEO_YTM_CLIENT_SECRET are required"
         )
     config_path = Path(env.get("KEO_CONFIG", "/config/keo.toml"))
-    spotdl, hour, recycle_days = _load_file(config_path)
+    spotdl, hour, recycle_days, notify_url, media_refresh_url = _load_file(config_path)
     return Settings(
         token=token,
         music_dir=music_dir,
@@ -114,6 +123,8 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         history_hour=hour,
         config_path=config_path,
         recycle_days=recycle_days,
+        notify_url=notify_url,
+        media_refresh_url=media_refresh_url,
     )
 
 
@@ -168,7 +179,9 @@ def _load_file(path: Path) -> tuple[SpotdlSettings, int, int]:
     recycle_days = _coerce("recycle_days", data.get("recycle_days", DEFAULT_RECYCLE_DAYS), DEFAULT_RECYCLE_DAYS)
     if recycle_days < 0:
         raise ConfigError("keo.toml: recycle_days must be 0 or greater")
-    return spotdl, hour, recycle_days
+    notify_url = _coerce("notify_url", data.get("notify_url", ""), "").strip()
+    media_refresh_url = _coerce("media_refresh_url", data.get("media_refresh_url", ""), "").strip()
+    return spotdl, hour, recycle_days, notify_url, media_refresh_url
 
 
 def _coerce(name: str, value: Any, default: Any) -> Any:
@@ -310,6 +323,19 @@ def save_recycle_days(path: Path, value: str) -> int:
     text = path.read_text(encoding="utf-8") if path.is_file() else ""
     path.write_text(_replace_assignment(text, "recycle_days", _render("recycle_days", days)), encoding="utf-8")
     return days
+
+
+def save_integrations(path: Path, notify_url: str, media_refresh_url: str) -> tuple[str, str]:
+    notify = notify_url.strip()
+    refresh = media_refresh_url.strip()
+    for name, val in (("notify_url", notify), ("media_refresh_url", refresh)):
+        if val and not val.startswith(("http://", "https://")):
+            raise ConfigError(f"keo.toml: {name} must start with http:// or https://")
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    text = _replace_assignment(text, "notify_url", _render("notify_url", notify))
+    text = _replace_assignment(text, "media_refresh_url", _render("media_refresh_url", refresh))
+    path.write_text(text, encoding="utf-8")
+    return notify, refresh
 
 
 def _blank(data: Mapping[str, Any], names: tuple[str, ...]) -> list[str]:

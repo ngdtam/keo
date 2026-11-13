@@ -135,3 +135,23 @@ def test_recycle_days_default_and_validation(env):
     write_config(env, "recycle_days = -1\n")
     with pytest.raises(ConfigError, match="recycle_days"):
         load_settings(env)
+
+
+def test_save_integrations_persists_notify_and_media_refresh_urls(env):
+    from pathlib import Path
+    from keo.config import save_integrations
+
+    cfg = Path(env["KEO_CONFIG"])
+    notify, refresh = save_integrations(
+        cfg,
+        "https://ntfy.sh/my-keo",
+        "http://navidrome:4533/rest/startScan",
+    )
+    assert notify == "https://ntfy.sh/my-keo"
+    assert refresh == "http://navidrome:4533/rest/startScan"
+    loaded = load_settings(env)
+    assert loaded.notify_url == "https://ntfy.sh/my-keo"
+    assert loaded.media_refresh_url == "http://navidrome:4533/rest/startScan"
+
+    with pytest.raises(ConfigError, match="http"):
+        save_integrations(cfg, "ftp://bad", "")

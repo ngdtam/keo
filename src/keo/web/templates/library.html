@@ -3,10 +3,28 @@
 {% block content %}
 <div class="d-flex align-items-center justify-content-between mb-3">
   <h2 class="page-title mb-0">Library</h2>
-  <div class="d-flex align-items-center gap-3">
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <a href="/library" class="btn{% if filter == 'all' %} active{% endif %}">All ({{ total_count }})</a>
+    <a href="/library?filter=missing" class="btn{% if filter == 'missing' %} active{% endif %}">Missing ({{ missing_count }})</a>
+    <a href="/library?filter=upgradable" class="btn{% if filter == 'upgradable' %} active{% endif %}">Upgradable ({{ upgradable_count }})</a>
+    <a href="/library?filter=unmatched" class="btn{% if filter == 'unmatched' %} active{% endif %}">Unmatched ({{ unmatched_count }})</a>
+    {% if missing_count %}
+    <form method="post" action="/library/redownload-missing" class="mb-0">
+      <button type="submit" class="btn">Re-download missing</button>
+    </form>
+    {% endif %}
+    {% if upgradable_count %}
+    <form method="post" action="/library/upgrade-all" class="mb-0">
+      <button type="submit" class="btn">Upgrade all</button>
+    </form>
+    {% endif %}
     <a href="/library/trash" class="btn">Trash</a>
     <form method="post" action="/library/rescan" class="mb-0">
       <button type="submit" class="btn">Rescan</button>
+    </form>
+    <a href="/library/organize/preview" class="btn">Preview rename</a>
+    <form method="post" action="/library/organize" class="mb-0">
+      <button type="submit" class="btn">Organize</button>
     </form>
     <label class="d-flex align-items-center gap-2 mb-0">
       Size
@@ -14,9 +32,30 @@
     </label>
   </div>
 </div>
+<div class="d-flex align-items-center justify-content-between mb-3 gap-3 flex-wrap">
+  <div class="text-secondary small">{{ stats }}</div>
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <form id="bulk-form" method="post" action="/library/bulk" class="d-flex align-items-center gap-2 mb-0">
+      <button type="submit" name="action" value="redownload" class="btn btn-sm">Re-download selected</button>
+      <button type="submit" name="action" value="delete" class="btn btn-sm btn-outline-danger">Delete selected</button>
+    </form>
+    <form method="get" action="/library" class="d-flex align-items-center gap-2 mb-0">
+      {% if filter != 'all' %}<input type="hidden" name="filter" value="{{ filter }}">{% endif %}
+      <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="Filter artist or title">
+      <select name="sort" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="artist"{% if sort == 'artist' %} selected{% endif %}>Sort: Artist</option>
+        <option value="title"{% if sort == 'title' %} selected{% endif %}>Sort: Title</option>
+        <option value="size"{% if sort == 'size' %} selected{% endif %}>Sort: Size</option>
+      </select>
+    </form>
+  </div>
+</div>
 <div class="library-grid d-flex flex-wrap gap-3">
   {% for row in rows %}
   <div class="card" style="width: var(--cover, 160px)">
+    <div class="p-1 d-flex justify-content-end">
+      <input type="checkbox" class="form-check-input m-0" name="items" value="{{ row.kind }}:{{ row.ident }}" form="bulk-form" aria-label="Select song">
+    </div>
     <a href="{{ row.href }}" class="card-link">
       <div class="ratio ratio-1x1 bg-secondary-lt">
         {% if row.cover %}

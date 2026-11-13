@@ -323,3 +323,81 @@ def test_review_dismiss_permanent_records_dismissed(client, auth, library):
     assert library.get_review("vid_perm") is None
     assert library.is_dismissed("vid_perm")
 
+
+def test_review_watch_sync_and_unwatch_playlist_routes(logged_in, library):
+    watch = logged_in.post(
+        "/review/playlists/watch",
+        data={"playlist_id": "https://music.youtube.com/playlist?list=PL123", "auto_queue": "1"},
+        follow_redirects=False,
+    )
+    assert watch.status_code == 303
+    watched = library.list_watched_playlists()
+    assert len(watched) == 1
+    assert watched[0].playlist_id == "PL123"
+    assert watched[0].auto_queue is True
+
+    sync = logged_in.post("/review/playlists/sync", follow_redirects=False)
+    assert sync.status_code == 303
+    assert library.active_job("vid1") is not None
+
+    unwatch = logged_in.post("/review/playlists/PL123/unwatch", follow_redirects=False)
+    assert unwatch.status_code == 303
+    assert library.list_watched_playlists() == []
+
+
+def test_review_follow_sync_and_unfollow_artist_routes(logged_in, library):
+    follow = logged_in.post(
+        "/review/artists/follow",
+        data={"artist": "Son Tung M-TP"},
+        follow_redirects=False,
+    )
+    assert follow.status_code == 303
+    followed = library.list_followed_artists()
+    assert len(followed) == 1
+    cid = followed[0].channel_id
+
+    sync = logged_in.post("/review/artists/sync", follow_redirects=False)
+    assert sync.status_code == 303
+    assert library.get_review("vid1") is not None
+
+    unfollow = logged_in.post(f"/review/artists/{cid}/unfollow", follow_redirects=False)
+    assert unfollow.status_code == 303
+    assert library.list_followed_artists() == []
+
+
+def test_activity_page_lists_recorded_events(logged_in, library):
+    library.record_event("Sơn Tùng M-TP - Lạc Trôi", "downloaded", "manual")
+    res = logged_in.get("/activity")
+    assert res.status_code == 200
+    assert "Activity" in res.text
+    assert "Sơn Tùng M-TP - Lạc Trôi" in res.text
+    assert "downloaded" in res.text
+
+
+def test_review_pick_match_lists_candidates_and_queues_chosen(logged_in, library, catalog):
+    from keo.records import SongRow
+
+    library.add_review("orig_vid", "Son Tung", "Lac Troi", reason="weak_match")
+    catalog.songs = [
+        SongRow("alt_vid_1", "Lac Troi (Official)", ("Son Tung M-TP",), "Single"),
+        SongRow("alt_vid_2", "Lac Troi (Remix)", ("Son Tung M-TP",), "Remix"),
+    ]
+
+    pick_page = logged_in.get("/review/orig_vid/pick")
+    assert pick_page.status_code == 200
+    assert "Lac Troi (Official)" in pick_page.text
+    assert "Lac Troi (Remix)" in pick_page.text
+
+    chosen = logged_in.post(
+        "/review/orig_vid/pick",
+        data={
+            "chosen_video_id": "alt_vid_1",
+            "artist": "Son Tung M-TP",
+            "title": "Lac Troi (Official)",
+        },
+        follow_redirects=False,
+    )
+    assert chosen.status_code == 303
+    assert library.active_job("alt_vid_1") is not None
+    assert library.get_review("orig_vid") is None
+

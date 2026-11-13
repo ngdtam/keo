@@ -45,6 +45,27 @@
   </form>
 </div>
 {% endif %}
+{% if song.kind == "song" %}
+<div class="card mb-3">
+  <div class="card-header"><h3 class="card-title mb-0">Link to YouTube Music song</h3></div>
+  <div class="card-body">
+    <form method="post" action="/library/song/{{ song.ident }}/link" class="row g-2">
+      <div class="col-md-3">
+        <input class="form-control" name="video_id" placeholder="YouTube video ID" required>
+      </div>
+      <div class="col-md-4">
+        <input class="form-control" name="artist" value="{{ song.artist }}" placeholder="Artist" required>
+      </div>
+      <div class="col-md-4">
+        <input class="form-control" name="title" value="{{ song.title }}" placeholder="Title" required>
+      </div>
+      <div class="col-md-1">
+        <button type="submit" class="btn w-100">Link</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
 <div class="card">
   <ul class="list-group list-group-flush">
   {% for job in jobs %}

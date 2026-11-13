@@ -257,12 +257,14 @@ def test_jobs_supports_youtube_source_and_migrates_old_table(tmp_path):
 
 
 def test_fresh_db_sets_user_version_and_columns(tmp_path):
+    from keo.library import LATEST_VERSION
+
     db_path = tmp_path / "fresh.db"
     Library(db_path, tmp_path / "archive.txt")
     con = sqlite3.connect(db_path)
     version = con.execute("PRAGMA user_version").fetchone()[0]
     cols = {row[1] for row in con.execute("PRAGMA table_info(songs)")}
-    assert version == 2
+    assert version == LATEST_VERSION
     assert {"audio_mtime", "audio_size", "audio_card", "audio_details", "has_cover"} <= cols
 
 
@@ -285,7 +287,9 @@ def test_migrates_v0_db_preserving_rows(tmp_path):
     songs = lib.list_songs()
     assert len(songs) == 1
     assert songs[0].spotify_id == "sp1"
-    assert sqlite3.connect(db_path).execute("PRAGMA user_version").fetchone()[0] == 2
+    from keo.library import LATEST_VERSION
+
+    assert sqlite3.connect(db_path).execute("PRAGMA user_version").fetchone()[0] == LATEST_VERSION
 
 
 def test_scanned_song_cache_and_missing_cleanup(library):
@@ -326,4 +330,16 @@ def test_housekeep_trims_old_history_and_finished_jobs(library):
     assert pulls_deleted == 1
     assert jobs_deleted == 2
     assert len(library.list_jobs()) == 2  # 1 kept finished + 1 still queued
+
+
+def test_record_and_list_events(library):
+    library.record_event("Low G - An Thần", "downloaded", "manual")
+    library.record_event("Đen - Lối Nhỏ", "deleted", "library")
+    events = library.list_events()
+    assert len(events) == 2
+    assert events[0].song == "Đen - Lối Nhỏ"
+    assert events[0].kind == "deleted"
+    assert events[0].detail == "library"
+    assert events[1].song == "Low G - An Thần"
+    assert events[1].kind == "downloaded"
 

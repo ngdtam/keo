@@ -47,3 +47,41 @@ def test_scan_clears_deleted_files_and_handles_corrupt_tags(library, tmp_path):
     assert res2 == ScanResult(added=0, updated=0, missing=1)
     assert library.list_songs()[0].audio_path is None
 
+
+def test_list_audio_finds_nested_artist_folders_and_skips_recycle(tmp_path):
+    from keo.library import list_audio
+
+    music = tmp_path / "music"
+    (music / "Low G").mkdir(parents=True)
+    (music / ".recycle").mkdir(parents=True)
+    nested = music / "Low G" / "An Thần.mp3"
+    nested.write_bytes(b"audio")
+    trashed = music / ".recycle" / "Old.mp3"
+    trashed.write_bytes(b"old")
+
+    found = list_audio(music)
+    assert nested in found
+    assert trashed not in found
+
+
+def test_organize_library_renames_audio_and_lrc_sidecar(library, tmp_path):
+    from keo.scan import organize_library
+
+    music = tmp_path / "music"
+    music.mkdir()
+    audio = music / "Low G - An Thần.mp3"
+    audio.write_bytes(b"audio")
+    lrc = music / "Low G - An Thần.lrc"
+    lrc.write_text("[00:01.00] hi", encoding="utf-8")
+
+    scan(music, library, audio_loader=lambda p: None, cover_checker=lambda p: False)
+    moved = organize_library(music, library, "{artist}/{title}.{output-ext}")
+    assert moved == 1
+
+    target = music / "Low G" / "An Thần.mp3"
+    assert target.is_file()
+    assert target.with_suffix(".lrc").is_file()
+    assert not audio.exists()
+    assert not lrc.exists()
+    assert library.list_songs()[0].audio_path == str(target)
+

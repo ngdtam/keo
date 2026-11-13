@@ -45,10 +45,16 @@ def format_output_template(
         .replace(".{output-ext}", "")
         .replace("{output-ext}", "")
     )
-    stem = Path(rendered).name.strip(" .") or f"{safe_artist} - {safe_title}"
+    parts = [
+        part.strip(" .")
+        for part in rendered.replace("\\", "/").split("/")
+        if part.strip(" .") and part.strip() not in {".", ".."}
+    ]
+    if not parts:
+        parts = [f"{safe_artist} - {safe_title}"]
     if max_length > 0:
-        stem = stem[:max_length].rstrip(" .")
-    return f"{stem}.%(ext)s"
+        parts[-1] = parts[-1][:max_length].rstrip(" .") or safe_title
+    return f"{'/'.join(parts)}.%(ext)s"
 
 
 def write_tags(path: Path, *, artist: str, title: str) -> None:

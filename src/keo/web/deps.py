@@ -44,6 +44,8 @@ class Services:
     data_dir: Path | None = None
     music_dir: Path | None = None
     recycle_days: int = 7
+    notify_url: str = ""
+    media_refresh_url: str = ""
     history_progress: HistoryProgress = field(default_factory=HistoryProgress)
 
 

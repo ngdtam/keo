@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -20,6 +20,7 @@ from keo.library import Library
 from keo.match import Name, is_close
 from keo.recycle import cleanup_recycle
 from keo.scan import scan
+from keo.system import backup_data, last_backup_date
 from keo.spotdl_cmd import Spotdl
 
 log = logging.getLogger(__name__)
@@ -179,6 +180,74 @@ def run_pull(
             progress.finish()
 
 
+def sync_watched_playlists(
+    *,
+    catalog: Catalog,
+    library: Library,
+    worker: Worker,
+    now: datetime | None = None,
+) -> int:
+    """Diff watched playlists against the library and add new tracks to review or queue."""
+    watched = library.list_watched_playlists()
+    if not watched:
+        return 0
+    synced_at = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
+    added = 0
+    for wp in watched:
+        try:
+            title, songs = catalog.playlist(wp.playlist_id)
+        except CatalogError as exc:
+            log.warning("Watched playlist %s sync failed: %s", wp.playlist_id, exc)
+            continue
+        for song in songs:
+            if library.is_owned(song.video_id, song.primary_artist, song.title):
+                continue
+            if library.is_dismissed(song.video_id):
+                continue
+            if library.active_job(song.video_id) is not None:
+                continue
+            if wp.auto_queue:
+                if worker.submit(song.video_id, song.primary_artist, song.title, source="manual") is not None:
+                    added += 1
+            elif library.get_review(song.video_id) is None:
+                library.add_review(song.video_id, song.primary_artist, song.title, reason="pending")
+                added += 1
+        library.set_watched_playlist_synced(wp.playlist_id, synced_at, title=title or wp.title)
+    return added
+
+
+def sync_followed_artists(
+    *,
+    catalog: Catalog,
+    library: Library,
+    now: datetime | None = None,
+) -> int:
+    """Check followed artists for new singles/albums/songs and send unseen ones to review."""
+    artists = library.list_followed_artists()
+    if not artists:
+        return 0
+    synced_at = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
+    added = 0
+    for fa in artists:
+        try:
+            name, songs = catalog.artist_releases(fa.channel_id)
+        except CatalogError as exc:
+            log.warning("Followed artist %s sync failed: %s", fa.channel_id, exc)
+            continue
+        for song in songs:
+            if library.is_owned(song.video_id, song.primary_artist, song.title):
+                continue
+            if library.is_dismissed(song.video_id):
+                continue
+            if library.active_job(song.video_id) is not None:
+                continue
+            if library.get_review(song.video_id) is None:
+                library.add_review(song.video_id, song.primary_artist, song.title, reason="pending")
+                added += 1
+        library.set_followed_artist_synced(fa.channel_id, synced_at, name=name or fa.name)
+    return added
+
+
 def is_due(now: datetime, hour: int, library: Library, last_attempt: date | None) -> bool:
     today = now.date()
     return (
@@ -204,6 +273,8 @@ class Scheduler:
         music_dir: Path | None = None,
         scanner: Callable[[Path, Library], object] = scan,
         recycle_days: int = 7,
+        data_dir: Path | None = None,
+        config_path: Path | None = None,
     ) -> None:
         zone = ZoneInfo(timezone)
         self._catalog = catalog
@@ -217,9 +288,14 @@ class Scheduler:
         self._music_dir = music_dir
         self._scanner = scanner
         self._recycle_days = recycle_days
+        self._data_dir = data_dir
+        self._config_path = config_path
         self._last_attempt: date | None = None
         self._last_scan: date | None = None
         self._last_housekeep: date | None = None
+        self._last_playlist_sync: date | None = None
+        self._last_artist_sync: date | None = None
+        self._last_backup: date | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -232,10 +308,27 @@ class Scheduler:
         ):
             self._last_scan = now.date()
             self._scanner(self._music_dir, self._library)
+            self._library.record_task_run("library_scan", 24)
             cleanup_recycle(self._music_dir, self._recycle_days)
+            self._library.record_task_run("recycle_sweep", 24)
         if now.hour >= self._hour and self._last_housekeep != now.date():
             self._last_housekeep = now.date()
             self._library.housekeep()
+            self._library.record_task_run("housekeeping", 24)
+        if now.hour >= self._hour and self._last_playlist_sync != now.date():
+            self._last_playlist_sync = now.date()
+            sync_watched_playlists(
+                catalog=self._catalog, library=self._library, worker=self._worker, now=now
+            )
+        if now.hour >= self._hour and self._last_artist_sync != now.date():
+            self._last_artist_sync = now.date()
+            sync_followed_artists(catalog=self._catalog, library=self._library, now=now)
+        if self._data_dir is not None and now.hour >= self._hour and self._last_backup != now.date():
+            self._last_backup = now.date()
+            last = last_backup_date(self._data_dir)
+            if last is None or (now.date() - last).days >= 7:
+                backup_data(self._data_dir, self._config_path, today=now.date())
+                self._library.record_task_run("backup", 168)
         if not is_due(now, self._hour, self._library, self._last_attempt):
             return False
         self._last_attempt = now.date()
@@ -244,6 +337,7 @@ class Scheduler:
             worker=self._worker, spotdl=self._spotdl, cookies=self._cookies, now=now,
             progress=self._progress,
         )
+        self._library.record_task_run("history_pull", 24)
         return True
 
     def start(self) -> None:

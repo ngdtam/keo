@@ -61,8 +61,48 @@ class Catalog:
         ]
 
     def playlist(self, playlist_id: str) -> tuple[str, list[SongRow]]:
+        if playlist_id in {"LM", "liked"}:
+            data = self._call(self._ytm.get_liked_songs, limit=100)
+            return data.get("title") or "Liked Music", _songs(data.get("tracks") or [])
         data = self._call(self._ytm.get_playlist, playlist_id, limit=100)
         return data.get("title") or "", _songs(data.get("tracks") or [])
+
+    def find_artist(self, query: str) -> tuple[str, str] | None:
+        results = self._call(self._ytm.search, query, filter="artists", limit=1)
+        for item in results:
+            cid = item.get("browseId")
+            name = item.get("artist") or ""
+            if cid:
+                return cid, name or cid
+        return None
+
+    def artist_releases(self, channel_id: str) -> tuple[str, list[SongRow]]:
+        data = self._call(self._ytm.get_artist, channel_id)
+        name = data.get("name") or ""
+        seen: set[str] = set()
+        songs: list[SongRow] = []
+
+        def _add(rows: list[SongRow]) -> None:
+            for row in rows:
+                if row.video_id in seen:
+                    continue
+                seen.add(row.video_id)
+                if not row.artists and name:
+                    row = SongRow(row.video_id, row.title, (name,), row.album)
+                songs.append(row)
+
+        _add(_songs((data.get("songs") or {}).get("results") or []))
+        releases = [
+            *((data.get("singles") or {}).get("results") or [])[:3],
+            *((data.get("albums") or {}).get("results") or [])[:2],
+        ]
+        for rel in releases:
+            bid = rel.get("browseId")
+            if not bid:
+                continue
+            album = self._call(self._ytm.get_album, bid)
+            _add(_songs(album.get("tracks") or []))
+        return name, songs
 
     def radio(self, video_id: str) -> list[SongRow]:
         data = self._call(self._ytm.get_watch_playlist, videoId=video_id, limit=25)

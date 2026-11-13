@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Pick Match{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h2 class="page-title mb-0">Pick match for {{ row.heard_title }}</h2>
+  <a href="/review" class="btn">Back</a>
+</div>
+<form method="get" action="/review/{{ row.video_id | urlencode }}/pick" class="d-flex gap-2 mb-3">
+  <input class="form-control" name="q" value="{{ query }}" placeholder="Search YouTube Music">
+  <button type="submit" class="btn">Search</button>
+</form>
+{% if error %}
+<div class="alert alert-warning">{{ error }}</div>
+{% endif %}
+<div class="card">
+  <ul class="list-group list-group-flush">
+    {% for c in candidates %}
+    <li class="list-group-item">
+      <div class="row align-items-center">
+        <div class="col">
+          <div class="fw-bold">{{ c.title }}</div>
+          <div class="text-secondary">{{ c.artists | join(", ") }}{% if c.album %} · {{ c.album }}{% endif %}</div>
+        </div>
+        <div class="col-auto">
+          <form method="post" action="/review/{{ row.video_id | urlencode }}/pick" class="mb-0">
+            <input type="hidden" name="chosen_video_id" value="{{ c.video_id }}">
+            <input type="hidden" name="artist" value="{{ c.primary_artist }}">
+            <input type="hidden" name="title" value="{{ c.title }}">
+            <button type="submit" class="btn btn-primary">Download this</button>
+          </form>
+        </div>
+      </div>
+    </li>
+    {% else %}
+    <li class="list-group-item text-secondary">No candidates found.</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endblock %}
+

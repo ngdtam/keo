@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import threading
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 from keo.config import cookie_ready
@@ -16,6 +19,23 @@ from keo.youtube_dl import Runner, download_youtube_audio, write_tags
 
 log = logging.getLogger(__name__)
 IDLE_WAIT_SECONDS = 5
+MIN_FREE_BYTES = 100 * 1024 * 1024
+BACKOFF_STEPS = (60, 300, 900, 3600)
+DEFAULT_RETRY_DELAY = 120.0
+
+
+def _is_provider_error(output: str) -> bool:
+    low = output.casefold()
+    return any(
+        token in low
+        for token in (
+            "429",
+            "rate limit",
+            "too many requests",
+            "cookies are no longer valid",
+            "sign in to confirm",
+        )
+    )
 
 
 class Worker:
@@ -27,12 +47,27 @@ class Worker:
         *,
         cookies: CookieGate,
         youtube_runner: Runner | None = None,
+        min_free_bytes: int = MIN_FREE_BYTES,
+        retry_delay_seconds: float = DEFAULT_RETRY_DELAY,
+        mono_clock: Callable[[], float] = time.monotonic,
+        on_success: Callable[[Job], None] | None = None,
+        on_failure: Callable[[Job, str], None] | None = None,
     ) -> None:
         self._library = library
         self._spotdl = spotdl
         self._music = music_dir
         self.cookies = cookies
         self._youtube_runner = youtube_runner
+        self._min_free_bytes = min_free_bytes
+        self._retry_delay = retry_delay_seconds
+        self._mono_clock = mono_clock
+        self._on_success = on_success
+        self._on_failure = on_failure
+        self._retried: set[int] = set()
+        self._pending_retries: dict[int, float] = {}
+        self._backoff_failures = 0
+        self._backoff_until = 0.0
+        self._backoff_reason = ""
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -65,7 +100,23 @@ class Worker:
         self._wake.set()
         return job
 
+    def backoff_status(self) -> dict:
+        remaining = max(0, int(self._backoff_until - self._mono_clock()))
+        return {
+            "active": remaining > 0,
+            "seconds_remaining": remaining,
+            "failures": self._backoff_failures,
+            "reason": self._backoff_reason,
+        }
+
     def run_once(self) -> bool:
+        now = self._mono_clock()
+        if now < self._backoff_until:
+            return False
+        for job_id, ready_at in list(self._pending_retries.items()):
+            if now >= ready_at:
+                self._pending_retries.pop(job_id, None)
+                self._library.retry(job_id)
         job = self._library.claim_next()
         if job is None:
             return False
@@ -99,6 +150,18 @@ class Worker:
             self._wake.clear()
 
     def _process(self, job: Job) -> None:
+        if self._music is not None and self._min_free_bytes > 0 and self._music.exists():
+            free = shutil.disk_usage(self._music).free
+            if free < self._min_free_bytes:
+                free_mb = free // (1024 * 1024)
+                need_mb = self._min_free_bytes // (1024 * 1024)
+                self._library.finish(
+                    job.id,
+                    ok=False,
+                    error=f"Not enough free disk space in {self._music}: {free_mb} MB free (need at least {need_mb} MB)",
+                )
+                return
+
         if job.source == "youtube":
             self._process_youtube(job)
             return
@@ -134,6 +197,10 @@ class Worker:
         before = list_audio(self._music) if self._music else set()
         result = self._spotdl.download(url, spotify_id, video_id=job.video_id)
         if result.ok:
+            self._backoff_failures = 0
+            self._backoff_until = 0.0
+            self._backoff_reason = ""
+            self._retried.discard(job.id)
             self._library.mark_owned(job.video_id, job.artist, job.title, spotify_id)
             appeared = list_audio(self._music) - before if self._music else set()
             if spotify_id and len(appeared) == 1:
@@ -141,8 +208,22 @@ class Worker:
                 self._library.set_audio_path(spotify_id, str(path))
                 refresh_song_cache(self._library, "spotify", spotify_id, path)
             self._library.finish(job.id, ok=True)
+            self._library.record_event(f"{job.artist} - {job.title}", "downloaded", job.source)
+            if self._on_success is not None:
+                self._on_success(job)
         else:
-            self._library.finish(job.id, ok=False, error=result.output)
+            if _is_provider_error(result.output):
+                self._backoff_failures += 1
+                delay = BACKOFF_STEPS[min(self._backoff_failures - 1, len(BACKOFF_STEPS) - 1)]
+                self._backoff_until = self._mono_clock() + delay
+                self._backoff_reason = "rate limit or refused cookie"
+            if job.id not in self._retried:
+                self._retried.add(job.id)
+                self._pending_retries[job.id] = self._mono_clock() + self._retry_delay
+                self._library.finish(job.id, ok=False, error=result.output)
+            else:
+                self._retried.discard(job.id)
+                self._process_youtube(job)
 
     def _process_youtube(self, job: Job) -> None:
         before = list_audio(self._music) if self._music else set()
@@ -169,5 +250,11 @@ class Worker:
                 self._library.set_audio_path(job.video_id, str(path))
                 refresh_song_cache(self._library, "video", job.video_id, path)
             self._library.finish(job.id, ok=True)
+            self._library.record_event(f"{job.artist} - {job.title}", "downloaded", job.source)
+            if self._on_success is not None:
+                self._on_success(job)
         else:
             self._library.finish(job.id, ok=False, error=result.output)
+            self._library.record_event(f"{job.artist} - {job.title}", "failed", result.output[:200])
+            if self._on_failure is not None:
+                self._on_failure(job, result.output)

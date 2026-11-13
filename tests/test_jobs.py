@@ -215,3 +215,79 @@ def test_worker_passes_video_id_to_spotdl_download(library, spotdl, cookies):
     assert w.run_once()
     assert spotdl.download_video_ids == ["vid123"]
 
+
+def test_worker_fails_when_free_space_below_threshold(library, spotdl, cookies, tmp_path, monkeypatch):
+    import shutil
+    from collections import namedtuple
+
+    Usage = namedtuple("Usage", "total used free")
+    monkeypatch.setattr(shutil, "disk_usage", lambda p: Usage(1000, 990, 10 * 1024 * 1024))
+    w = Worker(library, spotdl, music_dir=tmp_path, cookies=cookies)
+    job = w.submit("vid_space", "Artist", "Track")
+    assert w.run_once()
+    stored = library.get_job(job.id)
+    assert stored.status == "failed"
+    assert "free disk space" in stored.error.lower()
+    assert spotdl.download_video_ids == []
+
+
+def test_worker_auto_retries_once_then_falls_back_to_youtube(library, spotdl, cookies, tmp_path):
+    spotdl.candidates["Artist - Song"] = candidate(name="Song", artist="Artist", song_id="sp_retry")
+    spotdl.download_ok = False
+    spotdl.download_output = "Temporary network error"
+    music = tmp_path / "music"
+    music.mkdir()
+    yt_calls = []
+
+    def fake_yt(args, **kwargs):
+        yt_calls.append(args)
+        (music / "Artist - Song.mp3").write_bytes(b"yt")
+        return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
+
+    w = Worker(
+        library, spotdl, music_dir=music, cookies=cookies,
+        youtube_runner=fake_yt, retry_delay_seconds=0.0,
+    )
+    job = w.submit("vid_r", "Artist", "Song")
+
+    # First run: spotDL fails, schedules auto-retry
+    assert w.run_once()
+    assert library.get_job(job.id).status == "failed"
+
+    # Second run: auto-retry triggers, spotDL fails again -> falls back to yt-dlp and succeeds
+    assert w.run_once()
+    assert library.get_job(job.id).status == "succeeded"
+    assert len(yt_calls) == 1
+
+
+def test_worker_backoff_pauses_on_rate_limit_and_resets_on_success(library, spotdl, cookies):
+    now = [1000.0]
+    spotdl.candidates["A - One"] = candidate(name="One", artist="A", song_id="sp1")
+    spotdl.candidates["A - Two"] = candidate(name="Two", artist="A", song_id="sp2")
+    spotdl.download_ok = False
+    spotdl.download_output = "HTTP Error 429: Too Many Requests"
+
+    w = Worker(library, spotdl, cookies=cookies, mono_clock=lambda: now[0])
+    j1 = w.submit("v1", "A", "One")
+    j2 = w.submit("v2", "A", "Two")
+
+    assert w.run_once()
+    assert library.get_job(j1.id).status == "failed"
+    status = w.backoff_status()
+    assert status["active"] is True
+    assert status["seconds_remaining"] == 60
+    assert status["failures"] == 1
+
+    # Paused: second job is NOT claimed yet
+    assert w.run_once() is False
+    assert library.get_job(j2.id).status == "queued"
+
+    # Advance past 60s backoff and succeed -> backoff resets
+    now[0] += 61.0
+    spotdl.download_ok = True
+    spotdl.download_output = "ok"
+    assert w.run_once() is True
+    assert library.get_job(j2.id).status == "succeeded"
+    assert w.backoff_status()["active"] is False
+    assert w.backoff_status()["failures"] == 0
+

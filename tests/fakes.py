@@ -61,6 +61,14 @@ class FakeCatalog:
         self._check()
         return "Top 100 Songs Vietnam", self.songs
 
+    def find_artist(self, query):
+        self._check()
+        return "UC3muIvzjhubNpJ4Pn_0kCQw", query
+
+    def artist_releases(self, channel_id):
+        self._check()
+        return "Sơn Tùng M-TP", self.songs
+
     def radio(self, video_id):
         self._check()
         self.radio_calls.append(video_id)
@@ -77,6 +85,7 @@ class FakeSpotdl:
         self.fail_queries = set()
         self.download_ok = True
         self.download_error = None
+        self.download_output = "fake download output"
         self.lookups = []
         self.downloads = []
         self.download_video_ids = []
@@ -96,4 +105,4 @@ class FakeSpotdl:
         self.download_video_ids.append(video_id)
         if self.download_error is not None:
             raise self.download_error
-        return DownloadResult(self.download_ok, "fake download output")
+        return DownloadResult(self.download_ok, self.download_output)

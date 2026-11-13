@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated
@@ -18,7 +19,7 @@ from keo.recycle import (
     move_to_recycle,
     restore_from_recycle,
 )
-from keo.scan import scan
+from keo.scan import organize_library, plan_organize, scan
 from keo.web.deps import TEMPLATES, get_services, require_api, require_download, require_page
 from keo.web.routes_queue import _detail, format_job_time, queued
 
@@ -158,9 +159,31 @@ def song_cover(request: Request, kind: str, ident: str):
     return Response(content=data, media_type=mime)
 
 
-@router.get("/library", **PAGE)
-def library_page(request: Request):
-    services = get_services(request)
+def _target_kbps(bitrate: str) -> int:
+    match = re.match(r"^(\d+)k$", (bitrate or "").strip().lower())
+    return int(match.group(1)) if match else 0
+
+
+def _is_upgradable(row: SimpleNamespace, settings) -> bool:
+    if not row.path or not row.quality:
+        return False
+    quality = row.quality.lower()
+    target_fmt = (settings.format or "").strip().lower()
+    if target_fmt:
+        actual_fmt = quality.split("·", 1)[0].strip()
+        if actual_fmt == "aac":
+            actual_fmt = "m4a"
+        if actual_fmt and actual_fmt != target_fmt:
+            return True
+    target_kbps = _target_kbps(settings.bitrate)
+    if target_kbps > 0:
+        match = re.search(r"(\d+)\s*kbps", quality)
+        if match and int(match.group(1)) < target_kbps - 16:
+            return True
+    return False
+
+
+def _collect_rows(services) -> list[SimpleNamespace]:
     jobs_by_key = dict(_groups(services.library.list_jobs(limit=1000)))
     seen: set[tuple[str, str]] = set()
     rows = []
@@ -171,7 +194,76 @@ def library_page(request: Request):
     for key, jobs in jobs_by_key.items():
         if key not in seen:
             rows.append(_row(services, key, jobs))
-    return TEMPLATES.TemplateResponse(request, "library.html", {"rows": rows})
+    return rows
+
+
+def _format_bytes(total: int) -> str:
+    if total >= 1024 ** 3:
+        return f"{total / (1024 ** 3):.2f} GB"
+    if total >= 1024 ** 2:
+        return f"{total / (1024 ** 2):.1f} MB"
+    return f"{total // 1024} KB"
+
+
+def _library_stats(rows: list[SimpleNamespace]) -> str:
+    total_size = sum(r.size for r in rows if r.size)
+    formats: dict[str, int] = {}
+    for r in rows:
+        if r.quality:
+            fmt = r.quality.split("·", 1)[0].strip()
+            if fmt:
+                formats[fmt] = formats.get(fmt, 0) + 1
+    parts = [f"{len(rows)} songs", _format_bytes(total_size)]
+    if formats:
+        parts.append(" · ".join(f"{k}: {v}" for k, v in sorted(formats.items())))
+    return " · ".join(parts)
+
+
+@router.get("/library", **PAGE)
+def library_page(request: Request, filter: str = "all", q: str = "", sort: str = "artist"):
+    services = get_services(request)
+    settings = services.spotdl.settings
+    all_rows = _collect_rows(services)
+    missing_rows = [r for r in all_rows if not r.path and r.label not in {"Queued", "Downloading"}]
+    upgradable_rows = [r for r in all_rows if _is_upgradable(r, settings)]
+    unmatched_rows = [r for r in all_rows if r.kind == "song"]
+    if filter == "missing":
+        rows = missing_rows
+    elif filter == "upgradable":
+        rows = upgradable_rows
+    elif filter == "unmatched":
+        rows = unmatched_rows
+    else:
+        filter = "all"
+        rows = all_rows
+    query = q.strip().casefold()
+    if query:
+        rows = [
+            r for r in rows
+            if query in (r.artist or "").casefold() or query in (r.title or "").casefold()
+        ]
+    if sort == "title":
+        rows = sorted(rows, key=lambda r: (r.title or "").casefold())
+    elif sort == "size":
+        rows = sorted(rows, key=lambda r: r.size or 0, reverse=True)
+    else:
+        sort = "artist"
+        rows = sorted(rows, key=lambda r: ((r.artist or "").casefold(), (r.title or "").casefold()))
+    return TEMPLATES.TemplateResponse(
+        request,
+        "library.html",
+        {
+            "rows": rows,
+            "filter": filter,
+            "q": q,
+            "sort": sort,
+            "stats": _library_stats(all_rows),
+            "total_count": len(all_rows),
+            "missing_count": len(missing_rows),
+            "upgradable_count": len(upgradable_rows),
+            "unmatched_count": len(unmatched_rows),
+        },
+    )
 
 
 @router.post("/library/rescan", **PAGE)
@@ -180,6 +272,117 @@ def rescan_library(request: Request):
     if services.music_dir is not None:
         scan(services.music_dir, services.library)
     return RedirectResponse("/library", status_code=303)
+
+
+@router.get("/library/organize/preview", **PAGE)
+def organize_preview_route(request: Request):
+    services = get_services(request)
+    moves = []
+    if services.music_dir is not None:
+        settings = services.spotdl.settings
+        for song, src, target in plan_organize(
+            services.music_dir,
+            services.library,
+            settings.output_template,
+            max_length=settings.max_filename_length,
+        ):
+            moves.append(
+                {
+                    "artist": song.artist,
+                    "title": song.title,
+                    "src": str(src.relative_to(services.music_dir)),
+                    "dst": str(target.relative_to(services.music_dir)),
+                }
+            )
+    return TEMPLATES.TemplateResponse(request, "organize_preview.html", {"moves": moves})
+
+
+@router.post("/library/organize", **PAGE)
+def organize_library_route(request: Request):
+    services = get_services(request)
+    if services.music_dir is not None:
+        settings = services.spotdl.settings
+        organize_library(
+            services.music_dir,
+            services.library,
+            settings.output_template,
+            max_length=settings.max_filename_length,
+        )
+    return RedirectResponse("/library", status_code=303)
+
+
+@router.post("/library/bulk", **PAGE)
+def bulk_library_route(
+    request: Request,
+    action: Annotated[str, Form()],
+    items: Annotated[list[str], Form()] = (),
+):
+    services = get_services(request)
+    for raw in items:
+        if ":" not in raw:
+            continue
+        kind, ident = raw.split(":", 1)
+        if kind not in ("spotify", "video", "song"):
+            continue
+        song = services.library.get_song_by_identifier(kind, ident)
+        jobs = _matching_jobs(services, kind, ident)
+        if not jobs and song is None:
+            continue
+        if action == "redownload":
+            if kind in ("spotify", "video"):
+                if jobs:
+                    try:
+                        _redownload(services, kind, ident, jobs, allow_upgrade=True)
+                    except HTTPException:
+                        continue
+                elif song is not None and song.video_id:
+                    path = _known_file(services, ident, jobs, song=song)
+                    if path is not None and services.music_dir is not None and inside_music(services.music_dir, path):
+                        move_to_recycle(services.music_dir, path)
+                    if kind == "spotify":
+                        services.library.forget_spotify(ident)
+                    else:
+                        services.library.forget_video(ident)
+                    services.worker.submit(
+                        song.video_id, song.artist, song.title,
+                        source="library", spotify_id=song.spotify_id,
+                    )
+        elif action == "delete":
+            if any(job.status in {"queued", "running"} for job in jobs):
+                continue
+            path = _known_file(services, ident, jobs, song=song)
+            if path is not None and services.music_dir is not None and inside_music(services.music_dir, path):
+                move_to_recycle(services.music_dir, path)
+            if kind == "spotify":
+                services.library.forget_spotify(ident)
+                services.library.drop_spotify_jobs(ident)
+            elif kind == "video":
+                services.library.forget_video(ident)
+                services.library.drop_video_jobs(ident)
+            elif song is not None:
+                services.library.forget_song(song.id)
+            title = song.title if song is not None else jobs[0].title
+            services.library.record_event(title, "deleted", "bulk")
+    return RedirectResponse("/library", status_code=303)
+
+
+@router.post("/library/song/{ident}/link", **PAGE)
+def link_manual_song(
+    request: Request,
+    ident: str,
+    video_id: Annotated[str, Form()],
+    artist: Annotated[str, Form()],
+    title: Annotated[str, Form()],
+):
+    services = get_services(request)
+    try:
+        song_id = int(ident)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Unknown song") from exc
+    linked = services.library.link_song(song_id, video_id.strip(), artist.strip(), title.strip())
+    if linked is None:
+        raise HTTPException(status_code=404, detail="Unknown song")
+    return RedirectResponse(f"/library/video/{linked.video_id}", status_code=303)
 
 
 @router.get("/library/trash", **PAGE)
@@ -197,6 +400,7 @@ def trash_restore(request: Request, name: Annotated[str, Form()]):
     if services.music_dir is not None:
         try:
             restore_from_recycle(services.music_dir, name, services.library)
+            services.library.record_event(name, "restored")
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except FileNotFoundError as exc:
@@ -301,10 +505,12 @@ def delete_song(request: Request, kind: str, ident: str, scope: Annotated[str, F
             services.library.drop_video_jobs(ident)
     elif scope == "library" and song is not None:
         services.library.forget_song(song.id)
+    label = f"{song.artist} - {song.title}" if song is not None else (f"{jobs[0].artist} - {jobs[0].title}" if jobs else ident)
+    services.library.record_event(label, "deleted", scope)
     return RedirectResponse("/library", status_code=303)
 
 
-def _redownload(services, kind: str, ident: str, jobs: list[Job]):
+def _redownload(services, kind: str, ident: str, jobs: list[Job], *, allow_upgrade: bool = False):
     if not jobs:
         raise HTTPException(status_code=404, detail="Unknown song")
     live = next((job for job in jobs if job.status in {"queued", "running"}), None)
@@ -312,7 +518,10 @@ def _redownload(services, kind: str, ident: str, jobs: list[Job]):
         return queued(live)
     path = _known_file(services, ident, jobs)
     if path is not None:
-        raise HTTPException(status_code=409, detail="The file is already on disk.")
+        if not allow_upgrade:
+            raise HTTPException(status_code=409, detail="The file is already on disk.")
+        if services.music_dir is not None and inside_music(services.music_dir, path):
+            move_to_recycle(services.music_dir, path)
     require_download(services)
     if kind == "spotify":
         services.library.forget_spotify(ident)
@@ -329,6 +538,41 @@ def _redownload(services, kind: str, ident: str, jobs: list[Job]):
     if job is None:
         raise HTTPException(status_code=409, detail="Already in the library.")
     return queued(job)
+
+
+@router.post("/library/redownload-missing", **PAGE)
+def redownload_missing_route(request: Request):
+    services = get_services(request)
+    require_download(services)
+    jobs_by_key = dict(_groups(services.library.list_jobs(limit=1000)))
+    for row in _collect_rows(services):
+        if row.path or row.label in {"Queued", "Downloading"}:
+            continue
+        jobs = jobs_by_key.get((row.kind, row.ident), [])
+        if jobs:
+            try:
+                _redownload(services, row.kind, row.ident, jobs)
+            except HTTPException:
+                continue
+    return RedirectResponse("/library?filter=missing", status_code=303)
+
+
+@router.post("/library/upgrade-all", **PAGE)
+def upgrade_all_route(request: Request):
+    services = get_services(request)
+    require_download(services)
+    settings = services.spotdl.settings
+    jobs_by_key = dict(_groups(services.library.list_jobs(limit=1000)))
+    for row in _collect_rows(services):
+        if not _is_upgradable(row, settings):
+            continue
+        jobs = jobs_by_key.get((row.kind, row.ident), [])
+        if jobs:
+            try:
+                _redownload(services, row.kind, row.ident, jobs, allow_upgrade=True)
+            except HTTPException:
+                continue
+    return RedirectResponse("/library?filter=upgradable", status_code=303)
 
 
 @router.post("/api/library/spotify/{spotify_id}/download", **API)

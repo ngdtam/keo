@@ -648,3 +648,191 @@ def test_delete_moves_to_recycle_and_trash_restore_delete_empty(logged_in, libra
     empty = logged_in.post("/library/trash/empty", follow_redirects=False)
     assert empty.status_code == 303
     assert "No trashed files." in logged_in.get("/library/trash").text
+
+
+def test_library_organize_route_moves_files_and_redirects(logged_in, library, spotdl, tmp_path):
+    from dataclasses import replace
+
+    music = tmp_path / "music"
+    music.mkdir(parents=True, exist_ok=True)
+    audio = music / "Low G - An Thần.mp3"
+    audio.write_bytes(b"mp3")
+    audio.with_suffix(".lrc").write_text("[00:00] lyrics", encoding="utf-8")
+    spotdl.settings = replace(spotdl.settings, output_template="{artist}/{title}.{output-ext}")
+
+    logged_in.post("/library/rescan")
+    res = logged_in.post("/library/organize", follow_redirects=False)
+    assert res.status_code == 303
+    assert (music / "Low G" / "An Thần.mp3").is_file()
+    assert (music / "Low G" / "An Thần.lrc").is_file()
+    assert not audio.exists()
+
+
+def test_library_missing_and_upgradable_filters_and_bulk_actions(logged_in, library, spotdl, probe, tmp_path):
+    from dataclasses import replace
+    from keo.cookies import ProbeResult
+
+    music = tmp_path / "music"
+    music.mkdir(parents=True, exist_ok=True)
+    cookie = tmp_path / "cookies.txt"
+    cookie.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+    probe.results.append(ProbeResult([{"format_id": "141"}], ""))
+    spotdl.settings = replace(spotdl.settings, format="opus", bitrate="256k", cookie_file=str(cookie))
+
+    # 1. Missing song (job succeeded, no file)
+    library.mark_owned("v_miss", "A", "Missing Song", "sp_miss")
+    j_miss = library.enqueue("v_miss", "A", "Missing Song", source="manual", spotify_id="sp_miss", spotify_url=URL)
+    library.finish(j_miss.id, ok=True)
+
+    # 2. Upgradable song (128 kbps mp3 on disk)
+    low_file = music / "B - Low Quality.mp3"
+    low_file.write_bytes(b"mp3")
+    library.mark_owned("v_low", "B", "Low Quality", "sp_low")
+    j_low = library.enqueue("v_low", "B", "Low Quality", source="manual", spotify_id="sp_low", spotify_url=URL)
+    library.finish(j_low.id, ok=True)
+    library.set_audio_path("sp_low", str(low_file))
+    low_song = library.get_song_by_identifier("spotify", "sp_low")
+    library.set_audio_cache(
+        low_song.id, audio_path=str(low_file), mtime=1.0, size=3,
+        card="MP3 · 128 kbps", details=(), has_cover=False,
+    )
+
+    # 3. Up-to-date song (256 kbps opus on disk)
+    ok_file = music / "C - Good Quality.opus"
+    ok_file.write_bytes(b"opus")
+    library.mark_owned("v_ok", "C", "Good Quality", "sp_ok")
+    j_ok = library.enqueue("v_ok", "C", "Good Quality", source="manual", spotify_id="sp_ok", spotify_url=URL)
+    library.finish(j_ok.id, ok=True)
+    library.set_audio_path("sp_ok", str(ok_file))
+    ok_song = library.get_song_by_identifier("spotify", "sp_ok")
+    library.set_audio_cache(
+        ok_song.id, audio_path=str(ok_file), mtime=1.0, size=4,
+        card="OPUS · 256 kbps", details=(), has_cover=False,
+    )
+
+    miss_page = logged_in.get("/library?filter=missing")
+    assert miss_page.status_code == 200
+    assert "Missing Song" in miss_page.text
+    assert "Low Quality" not in miss_page.text
+    assert "Good Quality" not in miss_page.text
+
+    upg_page = logged_in.get("/library?filter=upgradable")
+    assert upg_page.status_code == 200
+    assert "Low Quality" in upg_page.text
+    assert "Missing Song" not in upg_page.text
+    assert "Good Quality" not in upg_page.text
+
+    res_miss = logged_in.post("/library/redownload-missing", follow_redirects=False)
+    assert res_miss.status_code == 303
+    assert library.active_job("v_miss") is not None
+
+    res_upg = logged_in.post("/library/upgrade-all", follow_redirects=False)
+    assert res_upg.status_code == 303
+    assert not low_file.exists()
+    assert (music / ".recycle" / "B - Low Quality.mp3").is_file()
+    assert library.active_job("v_low") is not None
+    assert library.active_job("v_ok") is None
+
+
+def test_library_stats_search_and_sort(logged_in, library, tmp_path):
+    music = tmp_path / "music"
+    music.mkdir(parents=True, exist_ok=True)
+    for idx, (artist, title, ext, card) in enumerate(
+        (
+            ("Zed", "Beta", "opus", "OPUS · 256 kbps"),
+            ("Alpha", "Gamma", "mp3", "MP3 · 320 kbps"),
+        ),
+        start=1,
+    ):
+        f = music / f"{artist} - {title}.{ext}"
+        f.write_bytes(b"x" * (1024 * idx))
+        library.mark_owned(f"v{idx}", artist, title, f"sp{idx}")
+        song = library.get_song_by_identifier("spotify", f"sp{idx}")
+        library.set_audio_cache(
+            song.id, audio_path=str(f), mtime=1.0, size=1024 * idx,
+            card=card, details=(), has_cover=False,
+        )
+
+    res = logged_in.get("/library?q=Alpha&sort=title")
+    assert res.status_code == 200
+    assert "2 songs" in res.text
+    assert "OPUS: 1" in res.text
+    assert "MP3: 1" in res.text
+    assert "Gamma" in res.text
+    assert "Beta" not in res.text
+
+
+def test_library_preview_rename_shows_planned_moves_without_moving(logged_in, library, tmp_path):
+    music = tmp_path / "music"
+    music.mkdir(parents=True, exist_ok=True)
+    src = music / "messy_name.mp3"
+    src.write_bytes(b"audio")
+    library.mark_owned("v_ren", "Son Tung", "Lac Troi", "sp_ren")
+    song = library.get_song_by_identifier("spotify", "sp_ren")
+    library.set_audio_cache(
+        song.id, audio_path=str(src), mtime=1.0, size=5, card="MP3", details=(), has_cover=False
+    )
+
+    res = logged_in.get("/library/organize/preview")
+    assert res.status_code == 200
+    assert "messy_name.mp3" in res.text
+    assert "Son Tung - Lac Troi.mp3" in res.text
+    assert src.is_file()
+
+
+def test_library_bulk_redownload_and_delete(logged_in, library, tmp_path):
+    music = tmp_path / "music"
+    music.mkdir(parents=True, exist_ok=True)
+    f1 = music / "A - One.mp3"
+    f2 = music / "B - Two.mp3"
+    f1.write_bytes(b"1")
+    f2.write_bytes(b"2")
+    library.mark_owned("v1", "A", "One", "sp1")
+    library.mark_owned("v2", "B", "Two", "sp2")
+    s1 = library.get_song_by_identifier("spotify", "sp1")
+    s2 = library.get_song_by_identifier("spotify", "sp2")
+    library.set_audio_cache(s1.id, audio_path=str(f1), mtime=1.0, size=1, card="MP3", details=(), has_cover=False)
+    library.set_audio_cache(s2.id, audio_path=str(f2), mtime=1.0, size=1, card="MP3", details=(), has_cover=False)
+
+    res_del = logged_in.post(
+        "/library/bulk",
+        data={"action": "delete", "items": ["spotify:sp1"]},
+        follow_redirects=False,
+    )
+    assert res_del.status_code == 303
+    assert not f1.exists()
+    assert (music / ".recycle" / "A - One.mp3").is_file()
+    assert library.get_song_by_identifier("spotify", "sp1") is None
+
+    res_redl = logged_in.post(
+        "/library/bulk",
+        data={"action": "redownload", "items": ["spotify:sp2"]},
+        follow_redirects=False,
+    )
+    assert res_redl.status_code == 303
+    assert library.active_job("v2") is not None
+
+
+def test_library_unmatched_filter_and_link_song(logged_in, library, tmp_path):
+    music = tmp_path / "music"
+    music.mkdir(parents=True, exist_ok=True)
+    f = music / "unknown_track.mp3"
+    f.write_bytes(b"audio")
+    song = library.upsert_scanned_song("", "unknown_track", str(f))
+    library.set_audio_cache(song.id, audio_path=str(f), mtime=1.0, size=5, card="MP3", details=(), has_cover=False)
+
+    res = logged_in.get("/library?filter=unmatched")
+    assert res.status_code == 200
+    assert "unknown_track" in res.text
+
+    link_res = logged_in.post(
+        f"/library/song/{song.id}/link",
+        data={"video_id": "ytm123", "artist": "Den", "title": "Bai Nay Chill Phet"},
+        follow_redirects=False,
+    )
+    assert link_res.status_code == 303
+    linked = library.get_song_by_identifier("video", "ytm123")
+    assert linked is not None
+    assert linked.artist == "Den"
+    assert linked.title == "Bai Nay Chill Phet"
+    assert linked.audio_path == str(f)
