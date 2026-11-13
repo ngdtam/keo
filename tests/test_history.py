@@ -216,3 +216,62 @@ def test_scheduler_waits_for_the_next_day_after_a_failed_pull(catalog, library, 
     assert scheduler.tick()
     catalog.fail = False
     assert not scheduler.tick()
+
+
+def test_scheduler_runs_daily_scan_once_per_day(catalog, library, worker, spotdl, cookies, tmp_path):
+    music = tmp_path / "music"
+    music.mkdir()
+    scanned = []
+    now = datetime(2026, 11, 12, 22, 5, tzinfo=ZONE)
+    sched = Scheduler(
+        catalog=catalog,
+        library=library,
+        worker=worker,
+        spotdl=spotdl,
+        cookies=cookies,
+        timezone="Asia/Ho_Chi_Minh",
+        hour=22,
+        clock=lambda: now,
+        music_dir=music,
+        scanner=lambda d, lib: scanned.append(d),
+    )
+    sched.tick()
+    sched.tick()
+    assert scanned == [music]
+
+
+def test_scheduler_sweeps_expired_recycle_files(catalog, library, worker, spotdl, cookies, tmp_path):
+    import os, time
+    music = tmp_path / "music"
+    music.mkdir()
+    recycle = music / ".recycle"
+    recycle.mkdir()
+    old_file = recycle / "Old - Song.mp3"
+    old_file.write_bytes(b"old")
+    old_time = time.time() - 10 * 86400
+    os.utime(old_file, (old_time, old_time))
+
+    now = datetime(2026, 11, 12, 22, 5, tzinfo=ZONE)
+    sched = Scheduler(
+        catalog=catalog,
+        library=library,
+        worker=worker,
+        spotdl=spotdl,
+        cookies=cookies,
+        timezone="Asia/Ho_Chi_Minh",
+        hour=22,
+        clock=lambda: now,
+        music_dir=music,
+        scanner=lambda d, lib: None,
+        recycle_days=7,
+    )
+    sched.tick()
+    assert not old_file.exists()
+
+
+def test_dismiss_permanent_skips_future_history_pulls(catalog, library, worker, spotdl):
+    catalog.history_items = plays(video_id="vid_never", count=1)
+    library.dismiss("vid_never", permanent=True)
+    assert library.is_dismissed("vid_never")
+    pull(catalog, library, worker, spotdl)
+    assert library.get_review("vid_never") is None

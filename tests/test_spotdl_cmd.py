@@ -291,3 +291,17 @@ def test_bitrate_disable_passes_the_cookie_file(paths, tmp_path):
     settings = SpotdlSettings(cookie_file=cookies, format="mp3", bitrate="disable")
     args = build_args(settings, paths, "download", URL)
     assert values_after(args, "--cookie-file") == [cookies]
+
+
+def test_download_pairs_youtube_music_url_with_spotify_url(paths, tmp_path):
+    seen = []
+
+    def runner(args, **kwargs):
+        seen.append(args)
+        paths.archive.write_text(URL + "\n", encoding="utf-8")
+        return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
+
+    spotdl = Spotdl(SpotdlSettings(), paths, runner=runner)
+    res = spotdl.download(URL, None, video_id="vid1")
+    assert res.ok is True
+    assert f"https://music.youtube.com/watch?v=vid1|{URL}" in seen[0]

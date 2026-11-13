@@ -28,6 +28,8 @@ RESTRICT = ("", "strict", "ascii", "none")
 
 DEFAULT_TIMEZONE = "Asia/Ho_Chi_Minh"
 DEFAULT_HOUR = 22
+DEFAULT_RECYCLE_DAYS = 7
+RECYCLE_DAYS = ("0", "3", "7", "14", "30", "90")
 
 
 class ConfigError(Exception):
@@ -75,11 +77,12 @@ class Settings:
     history_timezone: str
     history_hour: int
     config_path: Path
+    recycle_days: int = DEFAULT_RECYCLE_DAYS
 
 
 _DEFAULT_SPOTDL = SpotdlSettings()
 _SPOTDL_NAMES = tuple(field.name for field in fields(SpotdlSettings))
-_ALLOWED = {*_SPOTDL_NAMES, "history_timezone", "history_hour"}
+_ALLOWED = {*_SPOTDL_NAMES, "history_timezone", "history_hour", "recycle_days"}
 
 
 def load_settings(env: Mapping[str, str]) -> Settings:
@@ -98,7 +101,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
             "KEO_YTM_CLIENT_SECRET are required"
         )
     config_path = Path(env.get("KEO_CONFIG", "/config/keo.toml"))
-    spotdl, hour = _load_file(config_path)
+    spotdl, hour, recycle_days = _load_file(config_path)
     return Settings(
         token=token,
         music_dir=music_dir,
@@ -110,6 +113,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
         history_timezone=_zone(env.get("TZ", "")),
         history_hour=hour,
         config_path=config_path,
+        recycle_days=recycle_days,
     )
 
 
@@ -137,7 +141,7 @@ def _zone(value: str) -> str:
     return name
 
 
-def _load_file(path: Path) -> tuple[SpotdlSettings, int]:
+def _load_file(path: Path) -> tuple[SpotdlSettings, int, int]:
     data: dict[str, Any] = {}
     if path.is_file():
         try:
@@ -161,7 +165,10 @@ def _load_file(path: Path) -> tuple[SpotdlSettings, int]:
     hour = _coerce("history_hour", data.get("history_hour", DEFAULT_HOUR), DEFAULT_HOUR)
     if not 0 <= hour <= 23:
         raise ConfigError("keo.toml: history_hour must be between 0 and 23")
-    return spotdl, hour
+    recycle_days = _coerce("recycle_days", data.get("recycle_days", DEFAULT_RECYCLE_DAYS), DEFAULT_RECYCLE_DAYS)
+    if recycle_days < 0:
+        raise ConfigError("keo.toml: recycle_days must be 0 or greater")
+    return spotdl, hour, recycle_days
 
 
 def _coerce(name: str, value: Any, default: Any) -> Any:
@@ -294,6 +301,15 @@ def save_choice(path: Path, settings: SpotdlSettings, name: str, value: str) -> 
     text = path.read_text(encoding="utf-8") if path.is_file() else ""
     path.write_text(_replace_assignment(text, name, _render(name, getattr(updated, name))), encoding="utf-8")
     return updated
+
+
+def save_recycle_days(path: Path, value: str) -> int:
+    if value not in RECYCLE_DAYS:
+        raise ConfigError(f"keo.toml: recycle_days must be one of {', '.join(RECYCLE_DAYS)}")
+    days = int(value)
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    path.write_text(_replace_assignment(text, "recycle_days", _render("recycle_days", days)), encoding="utf-8")
+    return days
 
 
 def _blank(data: Mapping[str, Any], names: tuple[str, ...]) -> list[str]:

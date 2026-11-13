@@ -3,10 +3,16 @@
 {% block content %}
 <div class="d-flex align-items-center justify-content-between mb-3">
   <h2 class="page-title mb-0">Library</h2>
-  <label class="d-flex align-items-center gap-2 mb-0">
-    Size
-    <input id="cover-size" type="range" min="96" max="320" step="8" value="160">
-  </label>
+  <div class="d-flex align-items-center gap-3">
+    <a href="/library/trash" class="btn">Trash</a>
+    <form method="post" action="/library/rescan" class="mb-0">
+      <button type="submit" class="btn">Rescan</button>
+    </form>
+    <label class="d-flex align-items-center gap-2 mb-0">
+      Size
+      <input id="cover-size" type="range" min="96" max="320" step="8" value="160">
+    </label>
+  </div>
 </div>
 <div class="library-grid d-flex flex-wrap gap-3">
   {% for row in rows %}

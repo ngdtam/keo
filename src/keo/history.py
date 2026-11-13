@@ -10,6 +10,7 @@ import logging
 import threading
 from collections.abc import Callable
 from datetime import date, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from keo.catalog import Catalog, CatalogError
@@ -17,6 +18,8 @@ from keo.cookies import CookieGate
 from keo.jobs import Worker
 from keo.library import Library
 from keo.match import Name, is_close
+from keo.recycle import cleanup_recycle
+from keo.scan import scan
 from keo.spotdl_cmd import Spotdl
 
 log = logging.getLogger(__name__)
@@ -147,6 +150,9 @@ def run_pull(
             if library.is_owned(heard.video_id, heard.artist, heard.title):
                 log.info("Skipping '%s - %s' (%s): already in library", heard.artist, heard.title, heard.video_id)
                 continue
+            if library.is_dismissed(heard.video_id):
+                log.info("Skipping '%s - %s' (%s): permanently dismissed", heard.artist, heard.title, heard.video_id)
+                continue
             if library.active_job(heard.video_id) is not None:
                 log.info("Skipping '%s - %s' (%s): download already active", heard.artist, heard.title, heard.video_id)
                 continue
@@ -195,6 +201,9 @@ class Scheduler:
         hour: int,
         clock: Callable[[], datetime] | None = None,
         progress: HistoryProgress | None = None,
+        music_dir: Path | None = None,
+        scanner: Callable[[Path, Library], object] = scan,
+        recycle_days: int = 7,
     ) -> None:
         zone = ZoneInfo(timezone)
         self._catalog = catalog
@@ -205,12 +214,28 @@ class Scheduler:
         self._hour = hour
         self._clock = clock or (lambda: datetime.now(zone))
         self._progress = progress
+        self._music_dir = music_dir
+        self._scanner = scanner
+        self._recycle_days = recycle_days
         self._last_attempt: date | None = None
+        self._last_scan: date | None = None
+        self._last_housekeep: date | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
     def tick(self) -> bool:
         now = self._clock()
+        if (
+            self._music_dir is not None
+            and now.hour >= self._hour
+            and self._last_scan != now.date()
+        ):
+            self._last_scan = now.date()
+            self._scanner(self._music_dir, self._library)
+            cleanup_recycle(self._music_dir, self._recycle_days)
+        if now.hour >= self._hour and self._last_housekeep != now.date():
+            self._last_housekeep = now.date()
+            self._library.housekeep()
         if not is_due(now, self._hour, self._library, self._last_attempt):
             return False
         self._last_attempt = now.date()

@@ -9,8 +9,16 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
-from keo.audio_info import load
-from keo.library import Job, inside_music, unique_title_file
+from keo.audio_info import cover_bytes, load
+from keo.library import Job, Song, inside_music, unique_title_file
+from keo.recycle import (
+    delete_from_recycle,
+    empty_recycle,
+    list_recycle,
+    move_to_recycle,
+    restore_from_recycle,
+)
+from keo.scan import scan
 from keo.web.deps import TEMPLATES, get_services, require_api, require_download, require_page
 from keo.web.routes_queue import _detail, format_job_time, queued
 
@@ -56,9 +64,17 @@ def _titles(services, ident: str, jobs: list[Job]) -> set[str]:
     return titles
 
 
-def _known_file(services, ident: str, jobs: list[Job]) -> Path | None:
+def _song_key(song: Song) -> tuple[str, str]:
+    if song.spotify_id:
+        return ("spotify", song.spotify_id)
+    if song.video_id:
+        return ("video", song.video_id)
+    return ("song", str(song.id))
+
+
+def _known_file(services, ident: str, jobs: list[Job], song: Song | None = None) -> Path | None:
     music = services.music_dir
-    raw = services.library.audio_path(ident)
+    raw = song.audio_path if song is not None else services.library.audio_path(ident)
     if raw:
         path = Path(raw)
         if music is not None and inside_music(music, path) and path.is_file():
@@ -73,22 +89,31 @@ def _known_file(services, ident: str, jobs: list[Job]) -> Path | None:
     return match
 
 
-def _row(services, key: tuple[str, str], jobs: list[Job]) -> SimpleNamespace:
+def _row(services, key: tuple[str, str], jobs: list[Job], song: Song | None = None) -> SimpleNamespace:
     kind, ident = key
-    newest = jobs[0]
-    path = _known_file(services, ident, jobs)
+    path = _known_file(services, ident, jobs, song=song)
     color, label = _indicator(_live(jobs), path)
-    href = f"/library/spotify/{ident}" if kind == "spotify" else f"/library/video/{ident}"
-    cover = ""
-    if path and cover_bytes(path):
-        cover = f"/library/{kind}/{ident}/cover"
-    heard = load(path) if path is not None and path.is_file() else None
+    href = f"/library/{kind}/{ident}"
+    artist = song.artist if song is not None else jobs[0].artist
+    title = song.title if song is not None else jobs[0].title
+
+    if song is not None and song.has_cover is not None and path is not None:
+        cover = f"/library/{kind}/{ident}/cover" if song.has_cover else ""
+        quality = song.audio_card or ""
+        details = song.audio_details
+        size = song.audio_size if song.audio_size is not None else path.stat().st_size
+    else:
+        cover = f"/library/{kind}/{ident}/cover" if (path and cover_bytes(path)) else ""
+        heard = load(path) if path is not None and path.is_file() else None
+        quality = heard.card if heard and heard.card else ""
+        details = heard.rows if heard else ()
+        size = path.stat().st_size if path else None
+
     return SimpleNamespace(
-        href=href, color=color, label=label, artist=newest.artist, title=newest.title,
-        path=str(path) if path else "", size=path.stat().st_size if path else None,
+        href=href, color=color, label=label, artist=artist, title=title,
+        path=str(path) if path else "", size=size,
         can_delete=True, ident=ident, cover=cover, kind=kind,
-        quality=heard.card if heard and heard.card else "",
-        details=heard.rows if heard else (),
+        quality=quality, details=details,
     )
 
 
@@ -105,51 +130,27 @@ def _job_lines(services, jobs: list[Job]) -> list[SimpleNamespace]:
     ]
 
 
-def cover_bytes(path: Path) -> tuple[bytes, str] | None:
-    try:
-        from mutagen import File
-    except ImportError:
-        return None
-    try:
-        audio = File(path)
-    except Exception:
-        return None
-    if audio is None:
-        return None
-    pictures = getattr(audio, "pictures", None) or []
-    if pictures:
-        return pictures[0].data, pictures[0].mime or "image/jpeg"
-    tags = getattr(audio, "tags", None)
-    if not tags:
-        return None
-    block = tags.get("metadata_block_picture") if hasattr(tags, "get") else None
-    if block:
-        import base64
-        from mutagen.flac import Picture
-        picture = Picture(base64.b64decode(block[0]))
-        return picture.data, picture.mime or "image/jpeg"
-    covr = tags.get("covr") if hasattr(tags, "get") else None
-    if covr:
-        return bytes(covr[0]), "image/jpeg"
-    for key in tags.keys():
-        if str(key).startswith("APIC"):
-            frame = tags[key]
-            return frame.data, getattr(frame, "mime", None) or "image/jpeg"
-    return None
+def _matching_jobs(services, kind: str, ident: str) -> list[Job]:
+    return [
+        job for job in services.library.list_jobs(limit=1000)
+        if (
+            job.spotify_id == ident if kind == "spotify"
+            else (job.spotify_id is None and job.video_id == ident) if kind == "video"
+            else False
+        )
+    ]
 
 
 @router.get("/library/{kind}/{ident}/cover", **PAGE)
 def song_cover(request: Request, kind: str, ident: str):
-    if kind not in ("spotify", "video"):
+    if kind not in ("spotify", "video", "song"):
         raise HTTPException(status_code=404, detail="Not found")
     services = get_services(request)
-    jobs = [
-        job for job in services.library.list_jobs()
-        if (job.spotify_id == ident if kind == "spotify" else (job.spotify_id is None and job.video_id == ident))
-    ]
-    if not jobs:
+    song = services.library.get_song_by_identifier(kind, ident)
+    jobs = _matching_jobs(services, kind, ident)
+    if not jobs and song is None:
         raise HTTPException(status_code=404, detail="Unknown song")
-    path = _known_file(services, ident, jobs)
+    path = _known_file(services, ident, jobs, song=song)
     found = cover_bytes(path) if path else None
     if found is None:
         raise HTTPException(status_code=404, detail="No cover")
@@ -160,17 +161,76 @@ def song_cover(request: Request, kind: str, ident: str):
 @router.get("/library", **PAGE)
 def library_page(request: Request):
     services = get_services(request)
-    rows = [_row(services, key, jobs) for key, jobs in _groups(services.library.list_jobs())]
+    jobs_by_key = dict(_groups(services.library.list_jobs(limit=1000)))
+    seen: set[tuple[str, str]] = set()
+    rows = []
+    for song in services.library.list_songs():
+        key = _song_key(song)
+        seen.add(key)
+        rows.append(_row(services, key, jobs_by_key.get(key, []), song=song))
+    for key, jobs in jobs_by_key.items():
+        if key not in seen:
+            rows.append(_row(services, key, jobs))
     return TEMPLATES.TemplateResponse(request, "library.html", {"rows": rows})
+
+
+@router.post("/library/rescan", **PAGE)
+def rescan_library(request: Request):
+    services = get_services(request)
+    if services.music_dir is not None:
+        scan(services.music_dir, services.library)
+    return RedirectResponse("/library", status_code=303)
+
+
+@router.get("/library/trash", **PAGE)
+def trash_page(request: Request):
+    services = get_services(request)
+    items = list_recycle(services.music_dir) if services.music_dir is not None else []
+    return TEMPLATES.TemplateResponse(
+        request, "trash.html", {"items": items, "recycle_days": services.recycle_days}
+    )
+
+
+@router.post("/library/trash/restore", **PAGE)
+def trash_restore(request: Request, name: Annotated[str, Form()]):
+    services = get_services(request)
+    if services.music_dir is not None:
+        try:
+            restore_from_recycle(services.music_dir, name, services.library)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Not found") from exc
+    return RedirectResponse("/library/trash", status_code=303)
+
+
+@router.post("/library/trash/delete", **PAGE)
+def trash_delete(request: Request, name: Annotated[str, Form()]):
+    services = get_services(request)
+    if services.music_dir is not None:
+        try:
+            delete_from_recycle(services.music_dir, name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse("/library/trash", status_code=303)
+
+
+@router.post("/library/trash/empty", **PAGE)
+def trash_empty(request: Request):
+    services = get_services(request)
+    if services.music_dir is not None:
+        empty_recycle(services.music_dir)
+    return RedirectResponse("/library/trash", status_code=303)
 
 
 @router.get("/library/spotify/{spotify_id}", **PAGE)
 def spotify_song(request: Request, spotify_id: str):
     services = get_services(request)
-    jobs = [job for job in services.library.list_jobs() if job.spotify_id == spotify_id]
-    if not jobs:
+    song = services.library.get_song_by_identifier("spotify", spotify_id)
+    jobs = _matching_jobs(services, "spotify", spotify_id)
+    if not jobs and song is None:
         raise HTTPException(status_code=404, detail="Unknown song")
-    row = _row(services, ("spotify", spotify_id), jobs)
+    row = _row(services, ("spotify", spotify_id), jobs, song=song)
     return TEMPLATES.TemplateResponse(
         request, "song.html", {"song": row, "jobs": _job_lines(services, jobs)}
     )
@@ -179,31 +239,39 @@ def spotify_song(request: Request, spotify_id: str):
 @router.get("/library/video/{video_id}", **PAGE)
 def video_song(request: Request, video_id: str):
     services = get_services(request)
-    jobs = [
-        job for job in services.library.list_jobs()
-        if job.spotify_id is None and job.video_id == video_id
-    ]
-    if not jobs:
+    song = services.library.get_song_by_identifier("video", video_id)
+    jobs = _matching_jobs(services, "video", video_id)
+    if not jobs and song is None:
         raise HTTPException(status_code=404, detail="Unknown song")
-    row = _row(services, ("video", video_id), jobs)
+    row = _row(services, ("video", video_id), jobs, song=song)
     return TEMPLATES.TemplateResponse(
         request, "song.html", {"song": row, "jobs": _job_lines(services, jobs)}
     )
 
 
+@router.get("/library/song/{song_id:int}", **PAGE)
+def local_song(request: Request, song_id: int):
+    services = get_services(request)
+    song = services.library.get_song(song_id)
+    if song is None:
+        raise HTTPException(status_code=404, detail="Unknown song")
+    row = _row(services, ("song", str(song_id)), [], song=song)
+    return TEMPLATES.TemplateResponse(
+        request, "song.html", {"song": row, "jobs": []}
+    )
+
+
 @router.post("/library/{kind}/{ident}/delete", **PAGE)
 def delete_song(request: Request, kind: str, ident: str, scope: Annotated[str, Form()] = ""):
-    if kind not in ("spotify", "video"):
+    if kind not in ("spotify", "video", "song"):
         raise HTTPException(status_code=404, detail="Not found")
     services = get_services(request)
-    jobs = [
-        job for job in services.library.list_jobs()
-        if (job.spotify_id == ident if kind == "spotify" else (job.spotify_id is None and job.video_id == ident))
-    ]
-    if not jobs:
+    song = services.library.get_song_by_identifier(kind, ident)
+    jobs = _matching_jobs(services, kind, ident)
+    if not jobs and song is None:
         raise HTTPException(status_code=404, detail="Unknown song")
     if scope == "library" and any(job.status in {"queued", "running"} for job in jobs):
-        row = _row(services, (kind, ident), jobs)
+        row = _row(services, (kind, ident), jobs, song=song)
         return TEMPLATES.TemplateResponse(
             request,
             "song.html",
@@ -215,25 +283,24 @@ def delete_song(request: Request, kind: str, ident: str, scope: Annotated[str, F
             status_code=409,
         )
     music = services.music_dir
-    raw = services.library.audio_path(ident)
+    raw = song.audio_path if song is not None else services.library.audio_path(ident)
     path = Path(raw) if raw else None
-    if path is None and music is not None and (services.library.has_spotify(ident) or services.library.has_song(ident)):
+    if path is None and music is not None and (song is not None or services.library.has_spotify(ident) or services.library.has_song(ident)):
         path = unique_title_file(music, _titles(services, ident, jobs))
     if path is not None and (music is None or not inside_music(music, path)):
         raise HTTPException(status_code=400, detail="Path is outside the music folder")
     if path is not None and path.is_file():
-        path.unlink()
-        lyrics = path.with_suffix(".lrc")
-        if lyrics.is_file() and music is not None and inside_music(music, lyrics):
-            lyrics.unlink()
+        move_to_recycle(music, path)
     if kind == "spotify":
         services.library.forget_spotify(ident)
         if scope == "library":
             services.library.drop_spotify_jobs(ident)
-    else:
+    elif kind == "video":
         services.library.forget_video(ident)
         if scope == "library":
             services.library.drop_video_jobs(ident)
+    elif scope == "library" and song is not None:
+        services.library.forget_song(song.id)
     return RedirectResponse("/library", status_code=303)
 
 

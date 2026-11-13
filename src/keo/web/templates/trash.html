@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Trash{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h2 class="page-title mb-0">Trash</h2>
+    <div class="text-secondary">
+      {% if recycle_days %}Files are kept for {{ recycle_days }} days.{% else %}Automatic cleanup is disabled.{% endif %}
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="/library" class="btn">Back to Library</a>
+    {% if items %}
+    <form method="post" action="/library/trash/empty" class="mb-0">
+      <button type="submit" class="btn">Empty trash</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+<div class="card">
+  <ul class="list-group list-group-flush">
+  {% for item in items %}
+    <li class="list-group-item d-flex align-items-center justify-content-between gap-2">
+      <div>
+        <div>{{ item.name }}</div>
+        <div class="text-secondary">{{ item.size }} bytes · {{ item.deleted_at }} UTC</div>
+      </div>
+      <div class="d-flex gap-2">
+        <form method="post" action="/library/trash/restore" class="mb-0">
+          <input type="hidden" name="name" value="{{ item.name }}">
+          <button type="submit" class="btn">Restore</button>
+        </form>
+        <form method="post" action="/library/trash/delete" class="mb-0">
+          <input type="hidden" name="name" value="{{ item.name }}">
+          <button type="submit" class="btn">Delete permanently</button>
+        </form>
+      </div>
+    </li>
+  {% else %}
+    <li class="list-group-item">No trashed files.</li>
+  {% endfor %}
+  </ul>
+</div>
+{% endblock %}
+

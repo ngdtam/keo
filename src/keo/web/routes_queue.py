@@ -65,9 +65,9 @@ def api_review(request: Request):
 
 
 @router.post("/api/review/{video_id}/dismiss", **API)
-def api_review_dismiss(request: Request, video_id: str):
+def api_review_dismiss(request: Request, video_id: str, permanent: bool = False):
     services = get_services(request)
-    services.library.dismiss(video_id)
+    services.library.dismiss(video_id, permanent=permanent)
     return JSONResponse({"status": "dismissed"})
 
 

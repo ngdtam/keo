@@ -126,3 +126,12 @@ def test_invalid_toml_is_rejected(env):
     write_config(env, "format = \n")
     with pytest.raises(ConfigError, match="keo.toml is invalid"):
         load_settings(env)
+
+
+def test_recycle_days_default_and_validation(env):
+    assert load_settings(env).recycle_days == 7
+    write_config(env, "recycle_days = 14\n")
+    assert load_settings(env).recycle_days == 14
+    write_config(env, "recycle_days = -1\n")
+    with pytest.raises(ConfigError, match="recycle_days"):
+        load_settings(env)

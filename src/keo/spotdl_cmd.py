@@ -158,8 +158,11 @@ class Spotdl:
         candidate = parse_save_output(proc.stdout) if proc.returncode == 0 else None
         return Lookup(candidate, tail(f"{proc.stdout}\n{proc.stderr}"))
 
-    def download(self, url: str, spotify_id: str | None) -> DownloadResult:
-        proc = self._run("download", url, DOWNLOAD_TIMEOUT_SECONDS)
+    def download(
+        self, url: str, spotify_id: str | None, *, video_id: str | None = None
+    ) -> DownloadResult:
+        query = f"https://music.youtube.com/watch?v={video_id}|{url}" if video_id else url
+        proc = self._run("download", query, DOWNLOAD_TIMEOUT_SECONDS)
         if proc is None:
             return DownloadResult(False, "spotDL download timed out")
         song_id = spotify_id or track_id(url)

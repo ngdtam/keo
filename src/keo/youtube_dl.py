@@ -27,6 +27,45 @@ def sanitize_filename(name: str) -> str:
     return re.sub(r'[/\\:*?"<>|]', "_", name).strip()
 
 
+def format_output_template(
+    template: str,
+    artist: str,
+    title: str,
+    *,
+    max_length: int = 0,
+) -> str:
+    safe_artist = sanitize_filename(artist)
+    safe_title = sanitize_filename(title)
+    if not (safe_artist and safe_title):
+        return "%(artist,uploader)s - %(title)s.%(ext)s"
+    rendered = (
+        template.replace("{artists}", safe_artist)
+        .replace("{artist}", safe_artist)
+        .replace("{title}", safe_title)
+        .replace(".{output-ext}", "")
+        .replace("{output-ext}", "")
+    )
+    stem = Path(rendered).name.strip(" .") or f"{safe_artist} - {safe_title}"
+    if max_length > 0:
+        stem = stem[:max_length].rstrip(" .")
+    return f"{stem}.%(ext)s"
+
+
+def write_tags(path: Path, *, artist: str, title: str) -> None:
+    try:
+        import mutagen
+        audio = mutagen.File(path, easy=True)
+        if audio is None or getattr(audio, "tags", None) is None:
+            return
+        if artist:
+            audio.tags["artist"] = [artist]
+        if title:
+            audio.tags["title"] = [title]
+        audio.save()
+    except Exception:
+        log.debug("Could not write tags on %s", path, exc_info=True)
+
+
 def build_yt_dlp_args(
     video_id: str,
     artist: str,
@@ -35,13 +74,13 @@ def build_yt_dlp_args(
     *,
     audio_format: str = "mp3",
     cookie_file: str | None = None,
+    output_template: str = "{artists} - {title}.{output-ext}",
+    max_filename_length: int = 0,
 ) -> list[str]:
-    safe_artist = sanitize_filename(artist)
-    safe_title = sanitize_filename(title)
-    if safe_artist and safe_title:
-        output_template = str(music_dir / f"{safe_artist} - {safe_title}.%(ext)s")
-    else:
-        output_template = str(music_dir / "%(artist,uploader)s - %(title)s.%(ext)s")
+    filename = format_output_template(
+        output_template, artist, title, max_length=max_filename_length
+    )
+    template_path = str(music_dir / filename)
 
     binary = shutil.which("yt-dlp") or "yt-dlp"
     args = [
@@ -52,7 +91,7 @@ def build_yt_dlp_args(
         "--audio-quality", "0",
         "--embed-metadata",
         "--embed-thumbnail",
-        "-o", output_template,
+        "-o", template_path,
     ]
     if cookie_file and Path(cookie_file).is_file():
         args.extend(["--cookies", str(cookie_file)])
@@ -68,6 +107,8 @@ def download_youtube_audio(
     *,
     audio_format: str = "mp3",
     cookie_file: str | None = None,
+    output_template: str = "{artists} - {title}.{output-ext}",
+    max_filename_length: int = 0,
     runner: Runner = subprocess.run,
 ) -> DownloadResult:
     args = build_yt_dlp_args(
@@ -77,6 +118,8 @@ def download_youtube_audio(
         music_dir,
         audio_format=audio_format,
         cookie_file=cookie_file,
+        output_template=output_template,
+        max_filename_length=max_filename_length,
     )
     music_dir.mkdir(parents=True, exist_ok=True)
     try:

@@ -112,6 +112,9 @@ async function updateReviewList(container) {
           <button type="button" class="btn btn-outline-secondary" data-dismiss="/api/review/${encodeURIComponent(row.video_id)}/dismiss">
             Dismiss
           </button>
+          <button type="button" class="btn btn-outline-danger" data-dismiss="/api/review/${encodeURIComponent(row.video_id)}/dismiss?permanent=1">
+            Never suggest
+          </button>
         </div>
       </div>
     </li>`).join("");

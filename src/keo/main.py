@@ -53,6 +53,7 @@ def build_app() -> FastAPI:
         timezone=settings.history_timezone,
         data_dir=settings.data_dir,
         music_dir=settings.music_dir,
+        recycle_days=settings.recycle_days,
     )
 
     scheduler = Scheduler(
@@ -64,6 +65,8 @@ def build_app() -> FastAPI:
         timezone=settings.history_timezone,
         hour=settings.history_hour,
         progress=services.history_progress,
+        music_dir=settings.music_dir,
+        recycle_days=settings.recycle_days,
     )
 
     @asynccontextmanager
