@@ -619,6 +619,8 @@ def test_delete_moves_to_recycle_and_trash_restore_delete_empty(logged_in, libra
     trash = logged_in.get("/library/trash")
     assert trash.status_code == 200
     assert "Trash Artist - Trash Song.mp3" in trash.text
+    assert "bytes" not in trash.text
+    assert "btn-outline-danger" in trash.text
 
     restore = logged_in.post(
         "/library/trash/restore",
@@ -775,9 +777,20 @@ def test_library_preview_rename_shows_planned_moves_without_moving(logged_in, li
 
     res = logged_in.get("/library/organize/preview")
     assert res.status_code == 200
+    assert "Path change" in res.text
+    assert "- " in res.text
+    assert "+ " in res.text
     assert "messy_name.mp3" in res.text
     assert "Son Tung - Lac Troi.mp3" in res.text
     assert src.is_file()
+
+
+def test_library_legend_uses_status_dots(logged_in):
+    text = logged_in.get("/library").text
+    assert "position-sticky top-0" in text
+    assert "status-dot bg-green" in text
+    assert "status-dot bg-red" in text
+    assert "status-dot bg-yellow" in text
 
 
 def test_library_bulk_redownload_and_delete(logged_in, library, tmp_path):
@@ -836,3 +849,31 @@ def test_library_unmatched_filter_and_link_song(logged_in, library, tmp_path):
     assert linked.artist == "Den"
     assert linked.title == "Bai Nay Chill Phet"
     assert linked.audio_path == str(f)
+
+
+def test_library_layout_hierarchy_and_overlay_checkbox(logged_in, library):
+    library.upsert_scanned_song("A", "Song", "/music/A - Song.mp3")
+    html = logged_in.get("/library").text
+    assert 'class="form-check-input library-select position-absolute top-0 start-0 m-2 z-1"' in html
+    assert 'style="width: var(--cover, 160px)"' not in html
+    assert 'id="bulk-form"' in html
+    assert "d-none align-items-center" in html
+    assert 'id="bulk-count"' in html
+
+    css = logged_in.get("/static/keo.css").text
+    assert ".btn-primary,\n.btn.active" in css
+    assert ".library-select" in css
+    assert "repeat(auto-fill, minmax(var(--cover, 160px), 1fr))" in css
+
+
+def test_song_page_uses_datagrid_and_human_size(logged_in, library, tmp_path, monkeypatch):
+    audio = _file(library, tmp_path)
+    monkeypatch.setattr(
+        "keo.web.routes_library.load",
+        lambda path: AudioView("Opus · 251 kbps", (("Format", "Opus"), ("Bitrate", "251 kbps"))),
+    )
+    html = logged_in.get("/library/spotify/sp1").text
+    assert 'class="datagrid"' in html
+    assert "0 KB" in html
+    assert "bytes" not in html
+    assert "btn-outline-danger" in html

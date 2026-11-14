@@ -58,8 +58,13 @@ def test_search_query_on_home_redirects(logged_in):
 def test_dashboard_shows_zero_counts(logged_in):
     text = logged_in.get("/").text
     assert "0 waiting" in text
+    assert "0 songs" in text
+    assert "0 missing" in text
     assert "0 queued or running" in text
     assert "0 failed" in text
+    assert "col-md-4" in text
+    assert "bg-yellow-lt" in text
+    assert "bg-red-lt" in text
     assert 'href="/review"' in text
     assert 'href="/library"' in text
 

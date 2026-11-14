@@ -106,9 +106,12 @@ async function updateReviewList(container) {
           <div>${escapeHtml(row.heard_artist)}</div>
         </div>
         <div class="col-auto d-flex gap-2">
-          <button type="button" class="btn" data-post="/api/review/${encodeURIComponent(row.video_id)}/download">
+          <button type="button" class="btn btn-primary" data-post="/api/review/${encodeURIComponent(row.video_id)}/download">
             Download
           </button>
+          <a href="/review/${encodeURIComponent(row.video_id)}/pick" class="btn btn-outline-secondary">
+            Pick match
+          </a>
           <button type="button" class="btn btn-outline-secondary" data-dismiss="/api/review/${encodeURIComponent(row.video_id)}/dismiss">
             Dismiss
           </button>
@@ -234,6 +237,23 @@ if (cover) {
     apply(size);
     localStorage.setItem("keo-cover", String(size));
   });
+}
+
+const bulkForm = document.getElementById("bulk-form");
+const bulkCount = document.getElementById("bulk-count");
+if (bulkForm && bulkCount) {
+  const syncBulkBar = () => {
+    const count = document.querySelectorAll('input.library-select:checked').length;
+    bulkForm.classList.toggle("d-none", count === 0);
+    bulkForm.classList.toggle("d-flex", count > 0);
+    bulkCount.textContent = `${count} selected`;
+  };
+  document.addEventListener("change", (event) => {
+    if (event.target.matches("input.library-select")) {
+      syncBulkBar();
+    }
+  });
+  syncBulkBar();
 }
 
 const search = document.querySelector("input[list=suggestions]");

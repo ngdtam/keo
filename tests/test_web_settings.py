@@ -175,6 +175,9 @@ def test_settings_saves_recycle_days(page, config_file):
     assert resp.status_code == 303
     assert "recycle_days = 30" in config_file.read_text(encoding="utf-8")
     assert page.app.state.services.recycle_days == 30
+    html = page.get("/settings").text
+    assert 'class="active btn"' in button(html, "recycle_days", "30")
+    assert 'aria-pressed="true"' in button(html, "recycle_days", "30")
 
 
 def test_settings_integrations_saves_urls(page, config_file):

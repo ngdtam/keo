@@ -2,105 +2,132 @@
 {% block title %}Settings{% endblock %}
 {% block content %}
 <h2 class="page-title mb-3">Settings</h2>
-{% if auth_error %}
-<div class="alert" role="alert">{{ auth_error }}</div>
-{% elif gaps %}
-<div class="alert" role="alert">YouTube Music auth file is missing {{ gaps | join(", ") }}.</div>
-{% else %}
-<p>YouTube Music auth file is complete.</p>
-{% endif %}
-<p>{{ cookie_line }}</p>
-{% if backoff_line %}<div class="alert" role="alert">{{ backoff_line }}</div>{% endif %}
+{% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
+{% if backoff_line %}<div class="alert alert-warning" role="alert">{{ backoff_line }}</div>{% endif %}
 {% for warning in warnings %}
-<div class="alert" role="alert">{{ warning }}</div>
+<div class="alert alert-warning" role="alert">{{ warning }}</div>
 {% endfor %}
-{% if error %}<div class="alert" role="alert">{{ error }}</div>{% endif %}
-<form method="post" action="/settings">
-  {% for group in groups %}
-  <fieldset class="mb-3">
-    <legend class="form-label">{{ group.title }}</legend>
-    <div class="btn-list">
-      {% for choice in group.choices %}
-      <button type="submit" class="{% if choice.selected %}active {% endif %}btn" name="{{ choice.name }}" value="{{ choice.value }}"
-        {% if choice.selected %}aria-pressed="true"{% else %}aria-pressed="false"{% endif %}
-        {% if choice.disabled %}disabled{% endif %}>{{ choice.label }}{% if choice.premium %} · Premium{% endif %}</button>
+
+<div class="row row-cards">
+  <div class="col-lg-5 d-flex flex-column gap-3">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title mb-0">Auth &amp; Cookie</h3></div>
+      <div class="card-body">
+        {% if auth_error %}
+        <div class="alert alert-danger mb-2" role="alert">{{ auth_error }}</div>
+        {% elif gaps %}
+        <div class="alert alert-warning mb-2" role="alert">YouTube Music auth file is missing {{ gaps | join(", ") }}.</div>
+        {% else %}
+        <p class="mb-2"><span class="status-dot bg-green me-2"></span>YouTube Music auth file is complete.</p>
+        {% endif %}
+        <p class="text-secondary small mb-3">{{ cookie_line }}</p>
+        <form method="post" action="/settings/cookie" enctype="multipart/form-data" class="mb-2">
+          <label class="form-label" for="cookie">YouTube Music cookie file</label>
+          <div class="input-group">
+            <input class="form-control" id="cookie" type="file" name="cookie">
+            <button class="btn btn-primary">Upload cookie</button>
+          </div>
+        </form>
+        <form method="post" action="/settings/cookie/check" class="mb-0">
+          <button class="btn btn-sm">Check cookie</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header d-flex align-items-center justify-content-between">
+        <h3 class="card-title mb-0">System</h3>
+        <div class="d-flex gap-2">
+          <form method="post" action="/settings/check-updates" class="mb-0">
+            <button type="submit" class="btn btn-sm">Check updates</button>
+          </form>
+          <form method="post" action="/settings/backup" class="mb-0">
+            <button type="submit" class="btn btn-sm btn-primary">Run backup now</button>
+          </form>
+        </div>
+      </div>
+      <ul class="list-group list-group-flush">
+      {% for level, msg in health_checks %}
+        <li class="list-group-item">
+          <span class="status-dot {% if level == 'ok' %}bg-green{% elif level == 'warn' %}bg-yellow{% else %}bg-red{% endif %} me-2"></span>{{ msg }}
+        </li>
       {% endfor %}
+        <li class="list-group-item text-secondary small">
+          Last backup: {{ last_backup.isoformat() if last_backup else "never" }}
+        </li>
+      </ul>
     </div>
-  </fieldset>
-  {% endfor %}
-</form>
-<form class="mt-3" method="post" action="/settings/cookie" enctype="multipart/form-data">
-  <label class="form-label" for="cookie">YouTube Music cookie file</label>
-  <input class="form-control mb-3" id="cookie" type="file" name="cookie">
-  <button class="btn">Upload cookie</button>
-</form>
-<form method="post" action="/settings/cookie/check">
-  <button class="btn">Check cookie</button>
-</form>
-<form class="mt-4" method="post" action="/settings/integrations">
-  <h3 class="mb-2">Integrations</h3>
-  <div class="mb-2">
-    <label class="form-label" for="notify_url">Notification webhook URL (ntfy, Gotify, Discord)</label>
-    <input class="form-control" id="notify_url" type="url" name="notify_url" value="{{ notify_url }}" placeholder="https://ntfy.sh/keo">
-  </div>
-  <div class="mb-3">
-    <label class="form-label" for="media_refresh_url">Media-server refresh URL (after download GET)</label>
-    <input class="form-control" id="media_refresh_url" type="url" name="media_refresh_url" value="{{ media_refresh_url }}" placeholder="http://navidrome:4533/rest/startScan">
-  </div>
-  <button class="btn">Save integrations</button>
-</form>
 
-<div class="card mt-4">
-  <div class="card-header d-flex align-items-center justify-content-between">
-    <h3 class="card-title mb-0">System</h3>
-    <div class="d-flex gap-2">
-      <form method="post" action="/settings/check-updates" class="mb-0">
-        <button type="submit" class="btn">Check updates</button>
-      </form>
-      <form method="post" action="/settings/backup" class="mb-0">
-        <button type="submit" class="btn">Run backup now</button>
-      </form>
+    <div class="card">
+      <div class="card-header"><h3 class="card-title mb-0">Scheduled tasks</h3></div>
+      <div class="table-responsive">
+        <table class="table card-table table-vcenter">
+          <thead>
+            <tr>
+              <th>Task</th>
+              <th>Interval</th>
+              <th>Last run</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in tasks %}
+            <tr>
+              <td>{{ t.name }}</td>
+              <td class="text-secondary">{{ t.interval_hours }}h</td>
+              <td class="text-secondary small">{{ t.last_run or "never" }}</td>
+              <td class="text-end">
+                <form method="post" action="/settings/tasks/{{ t.name }}/run" class="mb-0">
+                  <button type="submit" class="btn btn-sm">Run now</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
-  <ul class="list-group list-group-flush">
-  {% for level, msg in health_checks %}
-    <li class="list-group-item">
-      <span class="status-dot {% if level == 'ok' %}bg-green{% elif level == 'warn' %}bg-yellow{% else %}bg-red{% endif %} me-2"></span>{{ msg }}
-    </li>
-  {% endfor %}
-    <li class="list-group-item text-secondary">
-      Last backup: {{ last_backup.isoformat() if last_backup else "never" }}
-    </li>
-  </ul>
-</div>
 
-<div class="card mt-4">
-  <div class="card-header"><h3 class="card-title mb-0">Scheduled tasks</h3></div>
-  <div class="table-responsive">
-    <table class="table card-table table-vcenter">
-      <thead>
-        <tr>
-          <th>Task</th>
-          <th>Interval</th>
-          <th>Last run</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for t in tasks %}
-        <tr>
-          <td>{{ t.name }}</td>
-          <td class="text-secondary">{{ t.interval_hours }}h</td>
-          <td class="text-secondary">{{ t.last_run or "never" }}</td>
-          <td class="text-end">
-            <form method="post" action="/settings/tasks/{{ t.name }}/run" class="mb-0">
-              <button type="submit" class="btn btn-sm">Run now</button>
-            </form>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div class="col-lg-7 d-flex flex-column gap-3">
+    <div class="card">
+      <div class="card-header"><h3 class="card-title mb-0">Download &amp; Quality</h3></div>
+      <div class="card-body">
+        <form method="post" action="/settings" class="row g-3">
+          {% for group in groups %}
+          <div class="col-md-6">
+            <fieldset class="mb-0">
+              <legend class="form-label mb-1">{{ group.title }}</legend>
+              <div class="btn-list">
+                {% for choice in group.choices %}
+                <button type="submit" class="{% if choice.selected %}active {% endif %}btn" name="{{ choice.name }}" value="{{ choice.value }}"
+                  {% if choice.selected %}aria-pressed="true"{% else %}aria-pressed="false"{% endif %}
+                  {% if choice.disabled %}disabled{% endif %}>{{ choice.label }}{% if choice.premium %} · Premium{% endif %}</button>
+                {% endfor %}
+              </div>
+            </fieldset>
+          </div>
+          {% endfor %}
+        </form>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h3 class="card-title mb-0">Integrations</h3></div>
+      <div class="card-body">
+        <form method="post" action="/settings/integrations">
+          <div class="mb-2">
+            <label class="form-label" for="notify_url">Notification webhook URL (ntfy, Gotify, Discord)</label>
+            <input class="form-control" id="notify_url" type="url" name="notify_url" value="{{ notify_url }}" placeholder="https://ntfy.sh/keo">
+          </div>
+          <div class="mb-3">
+            <label class="form-label" for="media_refresh_url">Media-server refresh URL (after download GET)</label>
+            <input class="form-control" id="media_refresh_url" type="url" name="media_refresh_url" value="{{ media_refresh_url }}" placeholder="http://navidrome:4533/rest/startScan">
+          </div>
+          <button class="btn btn-primary">Save integrations</button>
+        </form>
+      </div>
+    </div>
   </div>
 </div>
 {% endblock %}

@@ -2,8 +2,8 @@
 {% block title %}Home{% endblock %}
 {% block content %}
 <div class="row row-cards">
-  <div class="col-md-6">
-    <div class="card">
+  <div class="col-md-4">
+    <div class="card h-100">
       <div class="card-body">
         <div class="subheader">Review</div>
         <div class="h1 mb-2">{{ review_count }} waiting</div>
@@ -11,12 +11,22 @@
       </div>
     </div>
   </div>
-  <div class="col-md-6">
-    <div class="card">
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <div class="subheader">Library</div>
+        <div class="h1 mb-2">{{ library_count }} songs</div>
+        <div class="text-secondary small mb-2">{{ library_size }} · {{ missing_count }} missing</div>
+        <a href="/library">Library</a>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100">
       <div class="card-body">
         <div class="subheader">Jobs</div>
-        <div>{{ active_count }} queued or running</div>
-        <div class="mb-2">{{ failed_count }} failed</div>
+        <div class="mb-1"><span class="badge bg-yellow-lt">{{ active_count }} queued or running</span></div>
+        <div class="mb-2"><span class="badge bg-red-lt">{{ failed_count }} failed</span></div>
         {% for song in attention %}
         <div><a href="{{ song.href }}">{{ song.title }}</a> {{ song.artist }}</div>
         {% endfor %}

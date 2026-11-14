@@ -18,19 +18,20 @@
       <thead>
         <tr>
           <th>Song</th>
-          <th>Current path</th>
-          <th>New path</th>
+          <th>Path change</th>
         </tr>
       </thead>
       <tbody>
         {% for m in moves %}
         <tr>
           <td>{{ m.artist }} - {{ m.title }}</td>
-          <td class="text-secondary">{{ m.src }}</td>
-          <td>{{ m.dst }}</td>
+          <td>
+            <div class="text-danger small text-break">- {{ m.src }}</div>
+            <div class="text-success fw-semibold small text-break">+ {{ m.dst }}</div>
+          </td>
         </tr>
         {% else %}
-        <tr><td colspan="3" class="text-secondary">All files already match the template.</td></tr>
+        <tr><td colspan="2" class="text-secondary">All files already match the template.</td></tr>
         {% endfor %}
       </tbody>
     </table>

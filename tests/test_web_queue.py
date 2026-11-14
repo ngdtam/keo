@@ -254,11 +254,14 @@ def test_history_pull_triggers_background_pull(client, auth, catalog, library, w
     assert "Manual history pull requested via API" in caplog.text
 
 
-def test_review_page_renders_check_history_button(logged_in):
+def test_review_page_renders_check_history_button(logged_in, library):
+    library.add_review("vid1", "Artist", "Title", reason="weak_match")
     response = logged_in.get("/review")
     assert response.status_code == 200
     assert 'data-post="/api/history/pull"' in response.text
     assert "Check history now" in response.text
+    assert '<span class="badge bg-primary-lt ms-auto">1</span>' in response.text
+    assert "col-lg-6" in response.text
 
 
 def test_keo_js_contains_history_and_job_polling(client):
@@ -267,6 +270,8 @@ def test_keo_js_contains_history_and_job_polling(client):
     assert "pollHistoryStatus" in response.text
     assert "pollJobs" in response.text
     assert "/api/history/status" in response.text
+    assert "/pick" in response.text
+    assert "Pick match" in response.text
 
 
 def test_dismiss_review_requires_token(client):

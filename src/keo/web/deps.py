@@ -20,7 +20,20 @@ from keo.records import SongRow
 from keo.spotdl_cmd import Spotdl
 from keo.web.auth import is_authorized
 
-TEMPLATES = Jinja2Templates(directory=Path(__file__).parent / "templates")
+def _sidebar_status(request: Request) -> dict[str, Any]:
+    services = getattr(getattr(request.app, "state", None), "services", None)
+    if services is None:
+        return {"nav_review_count": 0, "nav_settings_warn": False}
+    review_count = len(services.library.list_review())
+    backoff = services.worker.backoff_status()
+    warn = bool(backoff.get("active")) or services.ytm_auth is None
+    return {"nav_review_count": review_count, "nav_settings_warn": warn}
+
+
+TEMPLATES = Jinja2Templates(
+    directory=Path(__file__).parent / "templates",
+    context_processors=[_sidebar_status],
+)
 
 
 def _start_thread(fn: Callable[[], object]) -> None:

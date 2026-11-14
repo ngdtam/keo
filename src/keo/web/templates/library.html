@@ -1,44 +1,42 @@
 {% extends "base.html" %}
 {% block title %}Library{% endblock %}
 {% block content %}
-<div class="d-flex align-items-center justify-content-between mb-3">
-  <h2 class="page-title mb-0">Library</h2>
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+  <div class="d-flex align-items-baseline gap-3 flex-wrap">
+    <h2 class="page-title mb-0">Library</h2>
+    <span class="text-secondary small">{{ stats }}</span>
+  </div>
   <div class="d-flex align-items-center gap-2 flex-wrap">
-    <a href="/library" class="btn{% if filter == 'all' %} active{% endif %}">All ({{ total_count }})</a>
-    <a href="/library?filter=missing" class="btn{% if filter == 'missing' %} active{% endif %}">Missing ({{ missing_count }})</a>
-    <a href="/library?filter=upgradable" class="btn{% if filter == 'upgradable' %} active{% endif %}">Upgradable ({{ upgradable_count }})</a>
-    <a href="/library?filter=unmatched" class="btn{% if filter == 'unmatched' %} active{% endif %}">Unmatched ({{ unmatched_count }})</a>
+    <div class="btn-group btn-group-sm" role="group" aria-label="Library filter">
+      <a href="/library" class="btn{% if filter == 'all' %} active{% endif %}">All ({{ total_count }})</a>
+      <a href="/library?filter=missing" class="btn{% if filter == 'missing' %} active{% endif %}">Missing ({{ missing_count }})</a>
+      <a href="/library?filter=upgradable" class="btn{% if filter == 'upgradable' %} active{% endif %}">Upgradable ({{ upgradable_count }})</a>
+      <a href="/library?filter=unmatched" class="btn{% if filter == 'unmatched' %} active{% endif %}">Unmatched ({{ unmatched_count }})</a>
+    </div>
+    <a href="/library/trash" class="btn btn-sm">Trash</a>
+  </div>
+</div>
+<div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3 position-sticky top-0 z-2 bg-body py-2">
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <form method="post" action="/library/rescan" class="mb-0">
+      <button type="submit" class="btn btn-sm">Rescan</button>
+    </form>
+    <a href="/library/organize/preview" class="btn btn-sm">Preview rename</a>
+    <form method="post" action="/library/organize" class="mb-0">
+      <button type="submit" class="btn btn-sm">Organize</button>
+    </form>
     {% if missing_count %}
     <form method="post" action="/library/redownload-missing" class="mb-0">
-      <button type="submit" class="btn">Re-download missing</button>
+      <button type="submit" class="btn btn-sm btn-primary">Re-download missing</button>
     </form>
     {% endif %}
     {% if upgradable_count %}
     <form method="post" action="/library/upgrade-all" class="mb-0">
-      <button type="submit" class="btn">Upgrade all</button>
+      <button type="submit" class="btn btn-sm btn-primary">Upgrade all</button>
     </form>
     {% endif %}
-    <a href="/library/trash" class="btn">Trash</a>
-    <form method="post" action="/library/rescan" class="mb-0">
-      <button type="submit" class="btn">Rescan</button>
-    </form>
-    <a href="/library/organize/preview" class="btn">Preview rename</a>
-    <form method="post" action="/library/organize" class="mb-0">
-      <button type="submit" class="btn">Organize</button>
-    </form>
-    <label class="d-flex align-items-center gap-2 mb-0">
-      Size
-      <input id="cover-size" type="range" min="96" max="320" step="8" value="160">
-    </label>
   </div>
-</div>
-<div class="d-flex align-items-center justify-content-between mb-3 gap-3 flex-wrap">
-  <div class="text-secondary small">{{ stats }}</div>
-  <div class="d-flex align-items-center gap-2 flex-wrap">
-    <form id="bulk-form" method="post" action="/library/bulk" class="d-flex align-items-center gap-2 mb-0">
-      <button type="submit" name="action" value="redownload" class="btn btn-sm">Re-download selected</button>
-      <button type="submit" name="action" value="delete" class="btn btn-sm btn-outline-danger">Delete selected</button>
-    </form>
+  <div class="d-flex align-items-center gap-3 flex-wrap">
     <form method="get" action="/library" class="d-flex align-items-center gap-2 mb-0">
       {% if filter != 'all' %}<input type="hidden" name="filter" value="{{ filter }}">{% endif %}
       <input type="search" name="q" value="{{ q }}" class="form-control form-control-sm" placeholder="Filter artist or title">
@@ -48,14 +46,16 @@
         <option value="size"{% if sort == 'size' %} selected{% endif %}>Sort: Size</option>
       </select>
     </form>
+    <label class="d-flex align-items-center gap-2 mb-0 small text-secondary">
+      Size
+      <input id="cover-size" type="range" min="96" max="320" step="8" value="160">
+    </label>
   </div>
 </div>
-<div class="library-grid d-flex flex-wrap gap-3">
+<div class="library-grid">
   {% for row in rows %}
-  <div class="card" style="width: var(--cover, 160px)">
-    <div class="p-1 d-flex justify-content-end">
-      <input type="checkbox" class="form-check-input m-0" name="items" value="{{ row.kind }}:{{ row.ident }}" form="bulk-form" aria-label="Select song">
-    </div>
+  <div class="card">
+    <input type="checkbox" class="form-check-input library-select position-absolute top-0 start-0 m-2 z-1" name="items" value="{{ row.kind }}:{{ row.ident }}" form="bulk-form" aria-label="Select song">
     <a href="{{ row.href }}" class="card-link">
       <div class="ratio ratio-1x1 bg-secondary-lt">
         {% if row.cover %}
@@ -71,17 +71,24 @@
       </div>
     </a>
     {% if row.color == "red" %}
-    <button type="button" class="btn w-100" data-library-download="/api{{ row.href }}/download">Download</button>
+    <button type="button" class="btn btn-primary w-100" data-library-download="/api{{ row.href }}/download">Download</button>
     {% endif %}
-    <div class="bg-{{ row.color }}" data-status style="height: .4rem"></div>
+    <div class="bg-{{ row.color }}" data-status title="{{ row.label }}" style="height: .4rem"></div>
   </div>
   {% else %}
   <div class="col-12">No songs.</div>
   {% endfor %}
 </div>
-<div class="d-flex flex-wrap gap-3 mt-4">
-  <div><span class="d-inline-block bg-green me-1" style="width: 2rem; height: .4rem"></span>On disk</div>
-  <div><span class="d-inline-block bg-red me-1" style="width: 2rem; height: .4rem"></span>Missing</div>
-  <div><span class="d-inline-block bg-yellow me-1" style="width: 2rem; height: .4rem"></span>Queued or running</div>
+<form id="bulk-form" method="post" action="/library/bulk" class="position-sticky bottom-0 z-2 bg-body border rounded shadow-sm py-2 px-3 mt-3 d-none align-items-center justify-content-between gap-2">
+  <span id="bulk-count" class="fw-bold small">0 selected</span>
+  <div class="d-flex align-items-center gap-2">
+    <button type="submit" name="action" value="redownload" class="btn btn-sm btn-primary">Re-download selected</button>
+    <button type="submit" name="action" value="delete" class="btn btn-sm btn-outline-danger">Delete selected</button>
+  </div>
+</form>
+<div class="d-flex flex-wrap gap-3 mt-4 text-secondary small">
+  <div class="d-flex align-items-center gap-1"><span class="status-dot bg-green"></span>On disk</div>
+  <div class="d-flex align-items-center gap-1"><span class="status-dot bg-red"></span>Missing</div>
+  <div class="d-flex align-items-center gap-1"><span class="status-dot bg-yellow"></span>Queued or running</div>
 </div>
 {% endblock %}

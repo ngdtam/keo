@@ -125,7 +125,7 @@ def _context(request: Request, error: str | None = None) -> dict:
                     "name": "recycle_days",
                     "value": value,
                     "label": "Never" if value == "0" else value,
-                    "active": str(services.recycle_days) == value,
+                    "selected": str(services.recycle_days) == value,
                     "disabled": False,
                     "premium": False,
                 }

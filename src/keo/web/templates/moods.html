@@ -4,12 +4,10 @@
 <h2 class="page-title mb-3">Moods</h2>
 {% for section, moods in sections.items() %}
 <h3 class="mb-2">{{ section }}</h3>
-<div class="card mb-3">
-  <ul class="list-group list-group-flush">
-    {% for mood in moods %}
-    <li class="list-group-item"><a href="/moods/{{ mood.params | urlencode }}">{{ mood.title }}</a></li>
-    {% endfor %}
-  </ul>
+<div class="d-flex flex-wrap gap-2 mb-4">
+  {% for mood in moods %}
+  <a href="/moods/{{ mood.params | urlencode }}" class="btn btn-outline-secondary btn-sm">{{ mood.title }}</a>
+  {% endfor %}
 </div>
 {% endfor %}
 {% endblock %}

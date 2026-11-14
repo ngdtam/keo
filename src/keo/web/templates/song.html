@@ -1,48 +1,55 @@
 {% extends "base.html" %}
 {% block title %}{{ song.title }}{% endblock %}
 {% block content %}
-<div class="row mb-3">
-  {% if song.cover %}
-  <div class="col-auto">
-    <img src="{{ song.cover }}" alt="" class="object-fit-cover" style="width: 160px; height: 160px">
-  </div>
-  {% endif %}
-  <div class="col">
-    <h2 class="page-title mb-1">{{ song.title }}</h2>
-    <p>{{ song.artist }}</p>
-    <p>
-      <span class="status-dot bg-{{ song.color }}"></span>
-      {{ song.label }}
-    </p>
-    {% if song.quality %}
-    <p class="text-secondary">{{ song.quality }}</p>
-    {% endif %}
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="row align-items-center g-3">
+      {% if song.cover %}
+      <div class="col-auto">
+        <img src="{{ song.cover }}" alt="" class="object-fit-cover rounded" style="width: 160px; height: 160px">
+      </div>
+      {% endif %}
+      <div class="col">
+        <h2 class="page-title mb-1">{{ song.title }}</h2>
+        <p class="mb-2">{{ song.artist }}</p>
+        <p class="mb-2">
+          <span class="status-dot bg-{{ song.color }} me-1"></span>
+          {{ song.label }}{% if song.quality %} · <span class="text-secondary">{{ song.quality }}</span>{% endif %}
+        </p>
+        {% if song.path %}
+        <p class="text-secondary small mb-3">{{ song.path }} · {{ song.size_human }}</p>
+        {% endif %}
+        {% if song.can_delete %}
+        <div class="d-flex flex-wrap gap-2">
+          <form method="post" action="{{ song.href }}/delete" class="mb-0">
+            <input type="hidden" name="scope" value="file">
+            <button class="btn btn-sm btn-outline-danger">Remove file</button>
+          </form>
+          <form method="post" action="{{ song.href }}/delete" class="mb-0">
+            <input type="hidden" name="scope" value="library">
+            <button class="btn btn-sm btn-outline-danger">Remove from library</button>
+          </form>
+        </div>
+        {% endif %}
+      </div>
+    </div>
   </div>
 </div>
-{% if song.path %}
-<p class="text-secondary">{{ song.path }} · {{ song.size }} bytes</p>
+{% if notice %}
+<div class="alert alert-warning mb-3" role="alert">{{ notice }}</div>
 {% endif %}
 {% if song.details %}
-<dl class="mb-3">
-  {% for label, value in song.details %}
-  <dt>{{ label }}</dt>
-  <dd>{{ value }}</dd>
-  {% endfor %}
-</dl>
-{% endif %}
-{% if notice %}
-<p>{{ notice }}</p>
-{% endif %}
-{% if song.can_delete %}
-<div class="d-flex gap-2 mb-3">
-  <form method="post" action="{{ song.href }}/delete">
-    <input type="hidden" name="scope" value="file">
-    <button class="btn">Remove file</button>
-  </form>
-  <form method="post" action="{{ song.href }}/delete">
-    <input type="hidden" name="scope" value="library">
-    <button class="btn">Remove from library</button>
-  </form>
+<div class="card mb-3">
+  <div class="card-body">
+    <div class="datagrid">
+      {% for label, value in song.details %}
+      <div class="datagrid-item">
+        <div class="datagrid-title">{{ label }}</div>
+        <div class="datagrid-content">{{ value }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
 </div>
 {% endif %}
 {% if song.kind == "song" %}

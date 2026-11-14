@@ -113,6 +113,7 @@ def _row(services, key: tuple[str, str], jobs: list[Job], song: Song | None = No
     return SimpleNamespace(
         href=href, color=color, label=label, artist=artist, title=title,
         path=str(path) if path else "", size=size,
+        size_human=_format_bytes(size) if size is not None else "",
         can_delete=True, ident=ident, cover=cover, kind=kind,
         quality=quality, details=details,
     )
@@ -390,7 +391,9 @@ def trash_page(request: Request):
     services = get_services(request)
     items = list_recycle(services.music_dir) if services.music_dir is not None else []
     return TEMPLATES.TemplateResponse(
-        request, "trash.html", {"items": items, "recycle_days": services.recycle_days}
+        request,
+        "trash.html",
+        {"items": items, "recycle_days": services.recycle_days, "format_bytes": _format_bytes},
     )
 
 
