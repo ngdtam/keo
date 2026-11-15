@@ -1,3 +1,7 @@
+from fastapi.testclient import TestClient
+
+from keo.web import create_app
+from keo.web.app import UI_DIST_DIR
 from tests.fakes import TOKEN
 
 
@@ -132,3 +136,22 @@ def test_api_library_detail_handles_spotify_and_404(client, auth, library):
 
     bad_kind = client.get("/api/library/unknown/sp1", headers=auth)
     assert bad_kind.status_code == 404
+
+
+def test_spa_served_when_enabled(client):
+    assert (UI_DIST_DIR / "index.html").is_file()
+    with TestClient(create_app(client.app.state.services, serve_ui=True)) as spa:
+        for path in (
+            "/login",
+            "/",
+            "/library",
+            "/library/spotify/sp1",
+            "/review/vid1/pick",
+            "/settings",
+        ):
+            res = spa.get(path)
+            assert res.status_code == 200, path
+            assert '<div id="app"></div>' in res.text, path
+
+        api_res = spa.get("/api/dashboard")
+        assert api_res.status_code == 401
