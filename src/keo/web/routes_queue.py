@@ -70,9 +70,7 @@ def review_page(request: Request):
     )
 
 
-@router.get("/review/{video_id}/pick", **PAGE)
-def review_pick_page(request: Request, video_id: str, q: str = ""):
-    services = get_services(request)
+def _review_candidates(services, video_id: str, q: str = "") -> tuple:
     row = services.library.get_review(video_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Unknown review song")
@@ -84,6 +82,12 @@ def review_pick_page(request: Request, video_id: str, q: str = ""):
             candidates = services.catalog.search(query)[:5]
         except CatalogError as exc:
             error = str(exc)
+    return row, query, candidates, error
+
+
+@router.get("/review/{video_id}/pick", **PAGE)
+def review_pick_page(request: Request, video_id: str, q: str = ""):
+    row, query, candidates, error = _review_candidates(get_services(request), video_id, q=q)
     return TEMPLATES.TemplateResponse(
         request,
         "review_pick.html",
@@ -200,10 +204,8 @@ def unfollow_artist_route(request: Request, channel_id: str):
     return RedirectResponse("/review", status_code=303)
 
 
-@router.get("/activity", **PAGE)
-def activity_page(request: Request):
-    services = get_services(request)
-    events = [
+def _activity_events(services) -> list[dict]:
+    return [
         {
             "time": format_job_time(ev.created_at, services.timezone),
             "song": ev.song,
@@ -212,6 +214,11 @@ def activity_page(request: Request):
         }
         for ev in services.library.list_events()
     ]
+
+
+@router.get("/activity", **PAGE)
+def activity_page(request: Request):
+    events = _activity_events(get_services(request))
     return TEMPLATES.TemplateResponse(request, "activity.html", {"events": events})
 
 

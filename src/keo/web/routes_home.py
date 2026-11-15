@@ -15,14 +15,8 @@ router = APIRouter()
 PAGE = {"response_class": HTMLResponse, "dependencies": [Depends(require_page)]}
 
 
-@router.get("/", **PAGE)
-def home_page(request: Request, q: str = ""):
-    query = q.strip()
-    if query:
-        return RedirectResponse("/search?" + urlencode({"q": query}), status_code=303)
-    services = get_services(request)
+def _dashboard_stats(services) -> dict:
     jobs = services.library.list_jobs()
-    context = _context(request)
     seen: set[str] = set()
     attention = []
     for job in jobs:
@@ -39,13 +33,23 @@ def home_page(request: Request, q: str = ""):
     all_rows = _collect_rows(services)
     library_size = _format_bytes(sum(r.size for r in all_rows if r.size))
     missing_count = sum(1 for r in all_rows if not r.path and r.label not in {"Queued", "Downloading"})
-    context.update(
-        review_count=len(services.library.list_review()),
-        library_count=len(all_rows),
-        library_size=library_size,
-        missing_count=missing_count,
-        active_count=sum(job.status in {"queued", "running"} for job in jobs),
-        failed_count=sum(job.status == "failed" for job in jobs),
-        attention=attention,
-    )
+    return {
+        "review_count": len(services.library.list_review()),
+        "library_count": len(all_rows),
+        "library_size": library_size,
+        "missing_count": missing_count,
+        "active_count": sum(job.status in {"queued", "running"} for job in jobs),
+        "failed_count": sum(job.status == "failed" for job in jobs),
+        "attention": attention,
+    }
+
+
+@router.get("/", **PAGE)
+def home_page(request: Request, q: str = ""):
+    query = q.strip()
+    if query:
+        return RedirectResponse("/search?" + urlencode({"q": query}), status_code=303)
+    services = get_services(request)
+    context = _context(request)
+    context.update(_dashboard_stats(services))
     return TEMPLATES.TemplateResponse(request, "home.html", context)

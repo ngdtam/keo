@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from keo.catalog import CatalogError
 from keo.web.deps import TEMPLATES, LoginRequired, Services
+from keo.web.routes_api import router as api_router
 from keo.web.routes_home import router as home_router
 from keo.web.routes_library import router as library_router
 from keo.web.routes_login import router as login_router
@@ -27,7 +28,7 @@ def create_app(services: Services, lifespan: Any = None) -> FastAPI:
     app.state.services = services
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     for router in (
-        login_router, home_router, search_router, browse_router,
+        api_router, login_router, home_router, search_router, browse_router,
         queue_router, library_router, settings_router,
     ):
         app.include_router(router)
