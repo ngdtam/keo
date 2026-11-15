@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
+from keo.web import app as web_app
 from keo.web import create_app
-from keo.web.app import UI_DIST_DIR
 from tests.fakes import TOKEN
 
 
@@ -138,8 +138,9 @@ def test_api_library_detail_handles_spotify_and_404(client, auth, library):
     assert bad_kind.status_code == 404
 
 
-def test_spa_served_when_enabled(client):
-    assert (UI_DIST_DIR / "index.html").is_file()
+def test_spa_served_when_enabled(client, tmp_path, monkeypatch):
+    (tmp_path / "index.html").write_text('<!doctype html><html><body><div id="app"></div></body></html>')
+    monkeypatch.setattr(web_app, "UI_DIST_DIR", tmp_path)
     with TestClient(create_app(client.app.state.services, serve_ui=True)) as spa:
         login_res = spa.get("/login")
         assert login_res.status_code == 200
