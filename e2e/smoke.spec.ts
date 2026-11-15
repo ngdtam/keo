@@ -41,5 +41,18 @@ test('logs in and renders every deployed route without errors', async ({ page })
     await expect(page.locator('body')).not.toBeEmpty();
   }
 
+  await page.goto('/');
+  const home = page.locator('#dashboard-panel-home');
+  await expect(home.getByText('Review', { exact: true })).toBeVisible();
+  await expect(home.getByText('Library', { exact: true })).toBeVisible();
+  await expect(home.getByText('Jobs', { exact: true })).toBeVisible();
+
+  await page.goto('/library');
+  await expect(page.getByRole('button', { name: 'Rescan' })).toBeVisible();
+
+  await page.goto('/settings');
+  await expect(page.getByText('Audio & spotDL')).toBeVisible();
+  await expect(page.getByText('YouTube Music & Cookies')).toBeVisible();
+
   expect(errors).toEqual([]);
 });
