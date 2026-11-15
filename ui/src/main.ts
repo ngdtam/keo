@@ -4,7 +4,11 @@ import { createRouter, createWebHistory } from 'vue-router'
 import ui from '@nuxt/ui/vue-plugin'
 import App from './App.vue'
 import HomePage from './pages/HomePage.vue'
+import LibraryPage from './pages/LibraryPage.vue'
 import LoginPage from './pages/LoginPage.vue'
+import OrganizePreviewPage from './pages/OrganizePreviewPage.vue'
+import SongDetailPage from './pages/SongDetailPage.vue'
+import TrashPage from './pages/TrashPage.vue'
 
 function placeholder(title: string) {
   return defineComponent({
@@ -18,8 +22,10 @@ const router = createRouter({
   routes: [
     { path: '/', component: HomePage },
     { path: '/login', component: LoginPage },
-    { path: '/library', component: placeholder('Library') },
-    { path: '/library/:kind/:ident', component: placeholder('LibraryItem') },
+    { path: '/library', component: LibraryPage },
+    { path: '/library/organize/preview', component: OrganizePreviewPage },
+    { path: '/library/trash', component: TrashPage },
+    { path: '/library/:kind/:ident', component: SongDetailPage },
     { path: '/search', component: placeholder('Search') },
     { path: '/charts', component: placeholder('Charts') },
     { path: '/moods', component: placeholder('Moods') },
