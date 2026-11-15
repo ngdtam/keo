@@ -3,17 +3,10 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
 
-from keo.web.deps import TEMPLATES, get_services, require_api, require_page, song_json
+from keo.web.deps import get_services, require_api, song_json
 
 router = APIRouter()
-
-
-@router.get("/search", response_class=HTMLResponse, dependencies=[Depends(require_page)])
-def search_page(request: Request, q: str = ""):
-    songs = get_services(request).catalog.search(q) if q.strip() else []
-    return TEMPLATES.TemplateResponse(request, "search.html", {"q": q, "songs": songs})
 
 
 @router.get("/api/search", dependencies=[Depends(require_api)])

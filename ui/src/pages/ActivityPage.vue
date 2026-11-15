@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import type { TableColumn } from '@nuxt/ui'
 import { apiGet, apiPostJson } from '../api'
 
@@ -53,11 +53,34 @@ const historyColumns: TableColumn<HistoryEvent>[] = [
 ]
 
 function statusColor(status: string): 'success' | 'error' | 'primary' | 'neutral' {
-  if (status === 'done') return 'success'
+  if (status === 'succeeded' || status === 'done') return 'success'
   if (status === 'failed') return 'error'
   if (status === 'running') return 'primary'
   return 'neutral'
 }
+
+function isPulling(status: string): boolean {
+  return status === 'running' || status === 'queued'
+}
+
+let pollTimer: ReturnType<typeof setInterval> | undefined
+
+function syncPolling() {
+  const active = jobs.value.some((j) => isPulling(j.status))
+  if (active && pollTimer === undefined) {
+    pollTimer = setInterval(loadActivity, 3000)
+  } else if (!active && pollTimer !== undefined) {
+    clearInterval(pollTimer)
+    pollTimer = undefined
+  }
+}
+
+onBeforeUnmount(() => {
+  if (pollTimer !== undefined) {
+    clearInterval(pollTimer)
+    pollTimer = undefined
+  }
+})
 
 async function loadActivity() {
   loading.value = true
@@ -66,6 +89,7 @@ async function loadActivity() {
     const res = await apiGet<ActivityResponse>('/api/activity')
     jobs.value = res.jobs
     history.value = res.history
+    syncPolling()
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to load activity'
   } finally {
@@ -135,6 +159,11 @@ onMounted(loadActivity)
                 <span class="font-medium text-sm">
                   {{ row.original.artist }} — {{ row.original.title }}
                 </span>
+                <UProgress
+                  v-if="isPulling(row.original.status)"
+                  size="xs"
+                  :color="row.original.status === 'running' ? 'primary' : 'neutral'"
+                />
                 <details v-if="row.original.error" class="text-xs text-error">
                   <summary class="cursor-pointer select-none">Error details</summary>
                   <pre class="mt-1 whitespace-pre-wrap break-all font-mono text-[11px]">{{

@@ -764,6 +764,13 @@ class Library:
         with self._lock:
             return self._active(video_id)
 
+    def count_active_jobs(self) -> int:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT COUNT(*) FROM jobs WHERE status IN ('queued', 'running')"
+            ).fetchone()
+        return int(row[0]) if row is not None else 0
+
     def retry(self, job_id: int) -> Job | None:
         with self._lock, self._db:
             job = self._job(job_id)

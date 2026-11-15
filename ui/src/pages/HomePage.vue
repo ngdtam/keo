@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { apiGet } from '../api'
 
 interface AttentionItem {
@@ -22,10 +21,8 @@ interface DashboardData {
   warnings: string[]
 }
 
-const router = useRouter()
 const data = ref<DashboardData | null>(null)
 const error = ref('')
-const searchQuery = ref('')
 
 onMounted(async () => {
   try {
@@ -34,30 +31,12 @@ onMounted(async () => {
     error.value = err instanceof Error ? err.message : 'Failed to load dashboard'
   }
 })
-
-function onSearch() {
-  const q = searchQuery.value.trim()
-  if (q) {
-    router.push({ path: '/search', query: { q } })
-  }
-}
 </script>
 
 <template>
   <UDashboardPanel id="home">
     <template #header>
-      <UDashboardNavbar title="Home">
-        <template #right>
-          <form @submit.prevent="onSearch">
-            <UInput
-              v-model="searchQuery"
-              placeholder="Search..."
-              icon="i-lucide-search"
-              size="sm"
-            />
-          </form>
-        </template>
-      </UDashboardNavbar>
+      <UDashboardNavbar title="Home" />
     </template>
 
     <template #body>

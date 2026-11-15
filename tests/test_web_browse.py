@@ -44,35 +44,3 @@ def test_playlist_api(client, auth):
 def test_radio_api(client, auth, catalog):
     assert client.get("/api/songs/vid1/radio", headers=auth).json() == [SONG_JSON]
     assert catalog.radio_calls == ["vid1"]
-
-
-@pytest.mark.parametrize(
-    ("path", "text"),
-    [
-        ("/charts", "Top 100 Songs Vietnam"),
-        ("/moods", "Chill"),
-        ("/moods/ggMchill", "Chill Vibes"),
-        ("/playlists/PLvn", "Lạc Trôi"),
-        ("/songs/vid1/radio", "Lạc Trôi"),
-    ],
-)
-def test_browse_pages(logged_in, path, text):
-    response = logged_in.get(path)
-    assert response.status_code == 200
-    assert text in response.text
-
-
-def test_chart_page_links_to_the_playlist(logged_in):
-    text = logged_in.get("/charts").text
-    assert "/playlists/PLvn" in text
-    assert "card-link" in text
-
-
-def test_moods_page_uses_pill_grid(logged_in):
-    text = logged_in.get("/moods").text
-    assert "btn-outline-secondary" in text
-    assert "/moods/ggMchill" in text
-
-
-def test_playlist_page_has_download_buttons(logged_in):
-    assert "data-download" in logged_in.get("/playlists/PLvn").text

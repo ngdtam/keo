@@ -16,11 +16,11 @@ from pydantic import BaseModel
 from keo.catalog import CatalogError
 from keo.history import decide, run_pull, sync_followed_artists, sync_watched_playlists
 from keo.library import Job
-from keo.web.deps import TEMPLATES, get_services, require_api, require_download, require_page
+from keo.web.deps import get_services, require_api, require_download, require_page
 
 log = logging.getLogger(__name__)
 router = APIRouter()
-PAGE = {"response_class": HTMLResponse, "dependencies": [Depends(require_page)]}
+PAGE = {"dependencies": [Depends(require_page)]}
 API = {"dependencies": [Depends(require_api)]}
 
 
@@ -56,20 +56,6 @@ def api_download(request: Request, body: DownloadRequest):
     return queued(services.worker.submit(body.video_id, artist, body.title))
 
 
-@router.get("/review", **PAGE)
-def review_page(request: Request):
-    lib = get_services(request).library
-    return TEMPLATES.TemplateResponse(
-        request,
-        "review.html",
-        {
-            "rows": lib.list_review(),
-            "watched": lib.list_watched_playlists(),
-            "artists": lib.list_followed_artists(),
-        },
-    )
-
-
 def _review_candidates(services, video_id: str, q: str = "") -> tuple:
     row = services.library.get_review(video_id)
     if row is None:
@@ -83,16 +69,6 @@ def _review_candidates(services, video_id: str, q: str = "") -> tuple:
         except CatalogError as exc:
             error = str(exc)
     return row, query, candidates, error
-
-
-@router.get("/review/{video_id}/pick", **PAGE)
-def review_pick_page(request: Request, video_id: str, q: str = ""):
-    row, query, candidates, error = _review_candidates(get_services(request), video_id, q=q)
-    return TEMPLATES.TemplateResponse(
-        request,
-        "review_pick.html",
-        {"row": row, "query": query, "candidates": candidates, "error": error},
-    )
 
 
 @router.post("/review/{video_id}/pick", **PAGE)
@@ -214,12 +190,6 @@ def _activity_events(services) -> list[dict]:
         }
         for ev in services.library.list_events()
     ]
-
-
-@router.get("/activity", **PAGE)
-def activity_page(request: Request):
-    events = _activity_events(get_services(request))
-    return TEMPLATES.TemplateResponse(request, "activity.html", {"events": events})
 
 
 @router.get("/api/review", **API)

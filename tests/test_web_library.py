@@ -7,33 +7,23 @@ from keo.jobs import Worker
 URL = "https://open.spotify.com/track/sp1"
 
 
-def test_library_download_script_updates_the_card():
-    script = (Path(__file__).parents[1] / "src" / "keo" / "web" / "static" / "keo.js").read_text(
-        encoding="utf-8",
-    )
-    assert "button[data-library-download]" in script
-    assert "button[data-download], button[data-post]" in script
-    assert 'button.textContent = "Queued"' in script
-    assert 'classList.add("bg-yellow")' in script
-
-
 def test_two_jobs_are_one_library_song(logged_in, library):
     library.enqueue("vid1", "Hà An Huy", "Như Một Người Rưng", source="manual", spotify_id="sp1", spotify_url=URL)
     library.enqueue("vid2", "OSAD", "Như Một Người Rưng", source="manual", spotify_id="sp1", spotify_url=URL)
-    page = logged_in.get("/library")
-    assert page.text.count("Như Một Người Rưng") == 1
-    song = logged_in.get("/library/spotify/sp1")
-    assert "Hà An Huy" in song.text
-    assert "OSAD" in song.text
+    rows = logged_in.get("/api/library").json()["rows"]
+    assert sum(1 for r in rows if r["title"] == "Như Một Người Rưng") == 1
+    song = logged_in.get("/api/library/spotify/sp1").json()
+    job_lines = "\n".join(j["line"] for j in song["jobs"])
+    assert "Hà An Huy" in job_lines
+    assert "OSAD" in job_lines
 
 
-def test_job_without_spotify_has_delete_buttons(logged_in, library):
+def test_job_without_spotify_has_api_detail(logged_in, library):
     library.enqueue("vid1", "Đen", "No Match", source="manual")
-    page = logged_in.get("/library/video/vid1")
-    assert page.status_code == 200
-    assert "Remove file" in page.text
-    assert "Remove from library" in page.text
-    assert 'action="/library/video/vid1/delete"' in page.text
+    res = logged_in.get("/api/library/video/vid1")
+    assert res.status_code == 200
+    assert res.json()["song"]["kind"] == "video"
+    assert res.json()["song"]["ident"] == "vid1"
 
 
 def test_unique_title_file_is_saved(logged_in, library, tmp_path):
@@ -46,10 +36,10 @@ def test_unique_title_file_is_saved(logged_in, library, tmp_path):
     library.finish(job.id, ok=True)
     audio = tmp_path / "music" / "Sơn Tùng M-TP - Đừng Làm Trái Tim Anh Đau.opus"
     audio.write_bytes(b"song")
-    text = logged_in.get("/library/spotify/sp1").text
-    assert "On disk" in text
-    assert "bg-green" in text
-    assert str(audio) in text
+    song = logged_in.get("/api/library/spotify/sp1").json()["song"]
+    assert song["label"] == "On disk"
+    assert song["color"] == "green"
+    assert song["path"] == str(audio)
     assert library.audio_path("sp1") == str(audio)
 
 
@@ -60,8 +50,8 @@ def test_two_title_matches_are_not_saved(logged_in, library, tmp_path):
     library.finish(job.id, ok=True)
     (tmp_path / "music" / "A - Same.opus").write_bytes(b"a")
     (tmp_path / "music" / "B - Same.opus").write_bytes(b"b")
-    text = logged_in.get("/library/spotify/sp1").text
-    assert "Missing" in text
+    song = logged_in.get("/api/library/spotify/sp1").json()["song"]
+    assert song["label"] == "Missing"
     assert library.audio_path("sp1") is None
 
 
@@ -71,9 +61,9 @@ def test_queued_song_is_yellow_even_with_a_file(logged_in, library, tmp_path):
     audio.write_bytes(b"song")
     library.set_audio_path("sp1", str(audio))
     library.enqueue("vid1", "A", "Song", source="manual", spotify_id="sp1", spotify_url=URL)
-    text = logged_in.get("/library").text
-    assert "bg-yellow" in text
-    assert "Queued or running" in text
+    rows = logged_in.get("/api/library").json()["rows"]
+    assert rows[0]["color"] == "yellow"
+    assert rows[0]["label"] == "queued"
 
 
 def test_delete_clears_the_file_and_the_lock(logged_in, library, worker, tmp_path):
@@ -92,17 +82,8 @@ def test_delete_clears_the_file_and_the_lock(logged_in, library, worker, tmp_pat
     assert not audio.with_suffix(".lrc").exists()
     assert URL not in library._archive_path.read_text(encoding="utf-8")
     assert library.get_job(1) is not None
-    assert "Missing" in logged_in.get("/library").text
+    assert logged_in.get("/api/library").json()["rows"][0]["label"] == "Missing"
     assert worker.submit("vid1", "A", "Song", spotify_url=URL, spotify_id="sp1") is not None
-
-
-def test_library_slider_starts_at_160(logged_in):
-    text = logged_in.get("/library").text
-    assert "Size" in text
-    assert 'min="96"' in text
-    assert 'max="320"' in text
-    assert 'step="8"' in text
-    assert 'value="160"' in text
 
 
 def test_remove_file_scope_keeps_the_job(logged_in, library, tmp_path):
@@ -119,7 +100,7 @@ def test_remove_file_scope_keeps_the_job(logged_in, library, tmp_path):
     assert response.status_code == 303
     assert not audio.exists()
     assert library.get_job(job.id) is not None
-    assert "Missing" in logged_in.get("/library").text
+    assert logged_in.get("/api/library").json()["rows"][0]["label"] == "Missing"
 
 
 def test_remove_from_library_drops_the_card(logged_in, library, tmp_path):
@@ -144,9 +125,9 @@ def test_remove_from_library_drops_the_card(logged_in, library, tmp_path):
     assert URL not in library._archive_path.read_text(encoding="utf-8")
     assert library.get_job(job.id) is None
     assert library.get_job(other.id) is not None
-    text = logged_in.get("/library").text
-    assert "Only This Title" not in text
-    assert "Other Song" in text
+    titles = [r["title"] for r in logged_in.get("/api/library").json()["rows"]]
+    assert "Only This Title" not in titles
+    assert "Other Song" in titles
 
 
 def test_remove_from_library_without_a_file(logged_in, library):
@@ -161,7 +142,7 @@ def test_remove_from_library_without_a_file(logged_in, library):
     )
     assert response.status_code == 303
     assert library.get_job(job.id) is None
-    assert "Only This Title" not in logged_in.get("/library").text
+    assert logged_in.get("/api/library").json()["rows"] == []
 
 
 def test_remove_from_library_refuses_a_queued_job(logged_in, library, tmp_path):
@@ -197,9 +178,8 @@ def test_delete_refuses_a_path_outside_the_music_folder(logged_in, library, tmp_
 def test_dashboard_links_a_failed_song(logged_in, library):
     job = library.enqueue("vid1", "Đen", "Broken", source="manual", spotify_id="sp9", spotify_url=URL)
     library.finish(job.id, ok=False, error="boom")
-    text = logged_in.get("/").text
-    assert 'href="/library/spotify/sp9"' in text
-    assert "Broken" in text
+    attention = logged_in.get("/api/dashboard").json()["attention"]
+    assert attention == [{"href": "/library/spotify/sp9", "artist": "Đen", "title": "Broken"}]
 
 
 def test_download_stores_one_new_file(library, spotdl, tmp_path, cookies):
@@ -240,14 +220,15 @@ def test_card_and_song_show_probed_audio(logged_in, library, tmp_path, monkeypat
             ),
         ),
     )
-    page = logged_in.get("/library").text
-    assert "Opus · 251 kbps" in page
-    assert "bg-yellow" in page
-    song = logged_in.get("/library/spotify/sp1").text
+    row = logged_in.get("/api/library").json()["rows"][0]
+    assert row["quality"] == "Opus · 251 kbps"
+    assert row["color"] == "yellow"
+    song = logged_in.get("/api/library/spotify/sp1").json()["song"]
+    details = dict(song["details"])
     for label in ("Format", "Bitrate", "Sample rate", "Channels", "Duration"):
-        assert label in song
-    assert "251 kbps VBR" in song
-    assert "Bit depth" not in song
+        assert label in details
+    assert details["Bitrate"] == "251 kbps VBR"
+    assert "Bit depth" not in details
 
 
 def test_song_page_shows_bit_depth_for_flac(logged_in, library, tmp_path, monkeypatch):
@@ -256,16 +237,17 @@ def test_song_page_shows_bit_depth_for_flac(logged_in, library, tmp_path, monkey
         "keo.web.routes_library.load",
         lambda path: AudioView("FLAC", (("Format", "FLAC"), ("Bit depth", "16 bit"))),
     )
-    assert "16 bit" in logged_in.get("/library/spotify/sp1").text
+    details = dict(logged_in.get("/api/library/spotify/sp1").json()["song"]["details"])
+    assert details["Bit depth"] == "16 bit"
 
 
 def test_missing_probe_leaves_the_labels_out(logged_in, library, tmp_path, monkeypatch):
     _file(library, tmp_path)
     monkeypatch.setattr("keo.web.routes_library.load", lambda path: None)
-    assert "kbps" not in logged_in.get("/library").text
-    song = logged_in.get("/library/spotify/sp1").text
-    assert "Sample rate" not in song
-    assert "Bit depth" not in song
+    assert logged_in.get("/api/library").json()["rows"][0]["quality"] == ""
+    details = dict(logged_in.get("/api/library/spotify/sp1").json()["song"]["details"])
+    assert "Sample rate" not in details
+    assert "Bit depth" not in details
 
 
 def test_download_stores_nothing_when_no_file_appears(library, spotdl, tmp_path, cookies):
@@ -283,21 +265,17 @@ def test_red_spotify_card_has_a_download_button(logged_in, library):
         "vid1", "A", "Song", source="manual", spotify_id="sp1", spotify_url=URL,
     )
     library.finish(job.id, ok=False, error="boom")
-    text = logged_in.get("/library").text
-    assert 'class="bg-red" data-status' in text
-    assert 'data-library-download="/api/library/spotify/sp1/download"' in text
-    assert ">Download</button>" in text
-    chunk = text.split('href="/library/spotify/sp1"', 1)[1]
-    assert chunk.index("</a>") < chunk.index("data-library-download")
+    row = logged_in.get("/api/library").json()["rows"][0]
+    assert row["color"] == "red"
+    assert row["kind"] == "spotify"
 
 
 def test_red_video_card_has_a_download_button(logged_in, library):
     job = library.enqueue("vid1", "Đen", "No Match", source="manual")
     library.finish(job.id, ok=False, error="boom")
-    text = logged_in.get("/library").text
-    assert 'data-library-download="/api/library/video/vid1/download"' in text
-    chunk = text.split('href="/library/video/vid1"', 1)[1]
-    assert chunk.index("</a>") < chunk.index("data-library-download")
+    row = logged_in.get("/api/library").json()["rows"][0]
+    assert row["kind"] == "video"
+    assert row["color"] == "red"
 
 
 def test_green_card_has_no_download_button(logged_in, library, tmp_path):
@@ -309,10 +287,8 @@ def test_green_card_has_no_download_button(logged_in, library, tmp_path):
     audio = tmp_path / "music" / "A - Song.opus"
     audio.write_bytes(b"song")
     library.set_audio_path("sp1", str(audio))
-    text = logged_in.get("/library").text
-    assert 'class="bg-green" data-status' in text
-    assert "data-library-download" not in text
-    assert ">Download</button>" not in text
+    row = logged_in.get("/api/library").json()["rows"][0]
+    assert row["color"] == "green"
 
 
 def test_yellow_card_has_no_download_button(logged_in, library, tmp_path):
@@ -321,9 +297,8 @@ def test_yellow_card_has_no_download_button(logged_in, library, tmp_path):
     audio = tmp_path / "music" / "A - Song.opus"
     audio.write_bytes(b"song")
     library.set_audio_path("sp1", str(audio))
-    text = logged_in.get("/library").text
-    assert 'class="bg-yellow" data-status' in text
-    assert "data-library-download" not in text
+    row = logged_in.get("/api/library").json()["rows"][0]
+    assert row["color"] == "yellow"
 
 
 def test_download_retries_a_failed_job_and_clears_the_lock(client, auth, library):
@@ -464,17 +439,9 @@ def test_song_page_shows_the_cover_and_no_download(logged_in, library, tmp_path,
     monkeypatch.setattr(
         "keo.web.routes_library.cover_bytes", lambda path: (b"img", "image/jpeg"),
     )
-    text = logged_in.get("/library/spotify/sp1").text
-    assert 'src="/library/spotify/sp1/cover"' in text
-    assert 'style="width: 160px; height: 160px"' in text
-    assert "Remove file" in text
-    assert "Remove from library" in text
-    assert "data-library-download" not in text
-
-
-def test_library_nav_item_is_active(logged_in):
-    text = logged_in.get("/library").text
-    assert 'class="nav-link active" href="/library"' in text
+    song = logged_in.get("/api/library/spotify/sp1").json()["song"]
+    assert song["cover"] == "/library/spotify/sp1/cover"
+    assert song["color"] == "green"
 
 
 def test_video_song_shows_cover_on_disk_and_no_download(logged_in, library, tmp_path, monkeypatch):
@@ -487,19 +454,13 @@ def test_video_song_shows_cover_on_disk_and_no_download(logged_in, library, tmp_
     monkeypatch.setattr(
         "keo.web.routes_library.cover_bytes", lambda path: (b"img", "image/jpeg"),
     )
-    # Check library grid card
-    lib_text = logged_in.get("/library").text
-    assert 'src="/library/video/vid_yt/cover"' in lib_text
-    assert "bg-green" in lib_text
-    assert 'data-library-download="/api/library/video/vid_yt/download"' not in lib_text
+    row = logged_in.get("/api/library").json()["rows"][0]
+    assert row["cover"] == "/library/video/vid_yt/cover"
+    assert row["color"] == "green"
 
-    # Check song page
-    song_text = logged_in.get("/library/video/vid_yt").text
-    assert 'src="/library/video/vid_yt/cover"' in song_text
-    assert "On disk" in song_text
-    assert "Remove file" in song_text
-    assert "Remove from library" in song_text
-    assert 'action="/library/video/vid_yt/delete"' in song_text
+    song = logged_in.get("/api/library/video/vid_yt").json()["song"]
+    assert song["cover"] == "/library/video/vid_yt/cover"
+    assert song["label"] == "On disk"
 
 
 def test_video_song_cover_serves_image_bytes(logged_in, library, tmp_path, monkeypatch):
@@ -532,7 +493,7 @@ def test_delete_video_song_scope_file(logged_in, library, tmp_path):
     assert not audio.exists()
     assert not audio.with_suffix(".lrc").exists()
     assert library.get_job(job.id) is not None
-    assert "Missing" in logged_in.get("/library").text
+    assert logged_in.get("/api/library").json()["rows"][0]["label"] == "Missing"
 
 
 def test_delete_video_song_scope_library(logged_in, library, tmp_path):
@@ -549,16 +510,17 @@ def test_delete_video_song_scope_library(logged_in, library, tmp_path):
     assert not audio.exists()
     assert not audio.with_suffix(".lrc").exists()
     assert library.get_job(job.id) is None
-    assert "Lối Nhỏ" not in logged_in.get("/library").text
+    titles = [r["title"] for r in logged_in.get("/api/library").json()["rows"]]
+    assert "Lối Nhỏ" not in titles
 
 
 def test_library_shows_more_than_100_songs_and_deletes_oldest(logged_in, library):
     for i in range(105):
         library.mark_owned(f"vid{i}", f"Artist {i}", f"Title {i}", f"sp{i}")
         library.enqueue(f"vid{i}", f"Artist {i}", f"Title {i}", source="manual", spotify_id=f"sp{i}")
-    page = logged_in.get("/library")
-    assert "Title 0" in page.text
-    assert "Title 104" in page.text
+    titles = {r["title"] for r in logged_in.get("/api/library").json()["rows"]}
+    assert "Title 0" in titles
+    assert "Title 104" in titles
     resp = logged_in.post("/library/spotify/sp0/delete", follow_redirects=False)
     assert resp.status_code == 303
     assert not library.has_spotify("sp0")
@@ -580,10 +542,11 @@ def test_library_uses_cached_metadata_without_opening_files(logged_in, library, 
         "keo.web.routes_library.cover_bytes",
         lambda p: (_ for _ in ()).throw(AssertionError("should not read cover")),
     )
-    page = logged_in.get("/library")
-    assert page.status_code == 200
-    assert "MP3 · 320 kbps" in page.text
-    assert f"/library/song/{song.id}/cover" in page.text
+    res = logged_in.get("/api/library")
+    assert res.status_code == 200
+    row = res.json()["rows"][0]
+    assert row["quality"] == "MP3 · 320 kbps"
+    assert row["cover"] == f"/library/song/{song.id}/cover"
 
 
 def test_rescan_button_and_manual_song_page_and_delete(logged_in, library, tmp_path):
@@ -591,12 +554,12 @@ def test_rescan_button_and_manual_song_page_and_delete(logged_in, library, tmp_p
     audio.write_bytes(b"mp3")
     resp = logged_in.post("/library/rescan", follow_redirects=False)
     assert resp.status_code == 303
-    page = logged_in.get("/library")
-    assert "Manual Song" in page.text
+    rows = logged_in.get("/api/library").json()["rows"]
+    assert rows[0]["title"] == "Manual Song"
     song = library.list_songs()[0]
-    detail = logged_in.get(f"/library/song/{song.id}")
+    detail = logged_in.get(f"/api/library/song/{song.id}")
     assert detail.status_code == 200
-    assert "Manual Artist" in detail.text
+    assert detail.json()["song"]["artist"] == "Manual Artist"
     delete = logged_in.post(f"/library/song/{song.id}/delete", data={"scope": "library"}, follow_redirects=False)
     assert delete.status_code == 303
     assert not audio.exists()
@@ -616,11 +579,12 @@ def test_delete_moves_to_recycle_and_trash_restore_delete_empty(logged_in, libra
     assert (music / ".recycle" / "Trash Artist - Trash Song.mp3").is_file()
     assert (music / ".recycle" / "Trash Artist - Trash Song.lrc").is_file()
 
-    trash = logged_in.get("/library/trash")
+    trash = logged_in.get("/api/library/trash")
     assert trash.status_code == 200
-    assert "Trash Artist - Trash Song.mp3" in trash.text
-    assert "bytes" not in trash.text
-    assert "btn-outline-danger" in trash.text
+    items = trash.json()["items"]
+    assert len(items) == 1
+    assert items[0]["name"] == "Trash Artist - Trash Song.mp3"
+    assert "bytes" not in items[0]["size_label"]
 
     restore = logged_in.post(
         "/library/trash/restore",
@@ -649,7 +613,7 @@ def test_delete_moves_to_recycle_and_trash_restore_delete_empty(logged_in, libra
     logged_in.post(f"/library/song/{song3.id}/delete", data={"scope": "library"})
     empty = logged_in.post("/library/trash/empty", follow_redirects=False)
     assert empty.status_code == 303
-    assert "No trashed files." in logged_in.get("/library/trash").text
+    assert logged_in.get("/api/library/trash").json()["items"] == []
 
 
 def test_library_organize_route_moves_files_and_redirects(logged_in, library, spotdl, tmp_path):
@@ -712,17 +676,19 @@ def test_library_missing_and_upgradable_filters_and_bulk_actions(logged_in, libr
         card="OPUS · 256 kbps", details=(), has_cover=False,
     )
 
-    miss_page = logged_in.get("/library?filter=missing")
+    miss_page = logged_in.get("/api/library?filter=missing")
     assert miss_page.status_code == 200
-    assert "Missing Song" in miss_page.text
-    assert "Low Quality" not in miss_page.text
-    assert "Good Quality" not in miss_page.text
+    miss_titles = {r["title"] for r in miss_page.json()["rows"]}
+    assert "Missing Song" in miss_titles
+    assert "Low Quality" not in miss_titles
+    assert "Good Quality" not in miss_titles
 
-    upg_page = logged_in.get("/library?filter=upgradable")
+    upg_page = logged_in.get("/api/library?filter=upgradable")
     assert upg_page.status_code == 200
-    assert "Low Quality" in upg_page.text
-    assert "Missing Song" not in upg_page.text
-    assert "Good Quality" not in upg_page.text
+    upg_titles = {r["title"] for r in upg_page.json()["rows"]}
+    assert "Low Quality" in upg_titles
+    assert "Missing Song" not in upg_titles
+    assert "Good Quality" not in upg_titles
 
     res_miss = logged_in.post("/library/redownload-missing", follow_redirects=False)
     assert res_miss.status_code == 303
@@ -755,13 +721,15 @@ def test_library_stats_search_and_sort(logged_in, library, tmp_path):
             card=card, details=(), has_cover=False,
         )
 
-    res = logged_in.get("/library?q=Alpha&sort=title")
+    res = logged_in.get("/api/library?q=Alpha&sort=title")
     assert res.status_code == 200
-    assert "2 songs" in res.text
-    assert "OPUS: 1" in res.text
-    assert "MP3: 1" in res.text
-    assert "Gamma" in res.text
-    assert "Beta" not in res.text
+    data = res.json()
+    assert "2 songs" in data["stats"]
+    assert "OPUS: 1" in data["stats"]
+    assert "MP3: 1" in data["stats"]
+    titles = [r["title"] for r in data["rows"]]
+    assert "Gamma" in titles
+    assert "Beta" not in titles
 
 
 def test_library_preview_rename_shows_planned_moves_without_moving(logged_in, library, tmp_path):
@@ -775,22 +743,13 @@ def test_library_preview_rename_shows_planned_moves_without_moving(logged_in, li
         song.id, audio_path=str(src), mtime=1.0, size=5, card="MP3", details=(), has_cover=False
     )
 
-    res = logged_in.get("/library/organize/preview")
+    res = logged_in.get("/api/library/organize/preview")
     assert res.status_code == 200
-    assert "Path change" in res.text
-    assert "- " in res.text
-    assert "+ " in res.text
-    assert "messy_name.mp3" in res.text
-    assert "Son Tung - Lac Troi.mp3" in res.text
+    moves = res.json()["moves"]
+    assert len(moves) == 1
+    assert moves[0]["src"] == "messy_name.mp3"
+    assert moves[0]["dst"] == "Son Tung - Lac Troi.mp3"
     assert src.is_file()
-
-
-def test_library_legend_uses_status_dots(logged_in):
-    text = logged_in.get("/library").text
-    assert "position-sticky top-0" in text
-    assert "status-dot bg-green" in text
-    assert "status-dot bg-red" in text
-    assert "status-dot bg-yellow" in text
 
 
 def test_library_bulk_redownload_and_delete(logged_in, library, tmp_path):
@@ -834,9 +793,9 @@ def test_library_unmatched_filter_and_link_song(logged_in, library, tmp_path):
     song = library.upsert_scanned_song("", "unknown_track", str(f))
     library.set_audio_cache(song.id, audio_path=str(f), mtime=1.0, size=5, card="MP3", details=(), has_cover=False)
 
-    res = logged_in.get("/library?filter=unmatched")
+    res = logged_in.get("/api/library?filter=unmatched")
     assert res.status_code == 200
-    assert "unknown_track" in res.text
+    assert any(r["title"] == "unknown_track" for r in res.json()["rows"])
 
     link_res = logged_in.post(
         f"/library/song/{song.id}/link",
@@ -851,29 +810,12 @@ def test_library_unmatched_filter_and_link_song(logged_in, library, tmp_path):
     assert linked.audio_path == str(f)
 
 
-def test_library_layout_hierarchy_and_overlay_checkbox(logged_in, library):
-    library.upsert_scanned_song("A", "Song", "/music/A - Song.mp3")
-    html = logged_in.get("/library").text
-    assert 'class="form-check-input library-select position-absolute top-0 start-0 m-2 z-1"' in html
-    assert 'style="width: var(--cover, 160px)"' not in html
-    assert 'id="bulk-form"' in html
-    assert "d-none align-items-center" in html
-    assert 'id="bulk-count"' in html
-
-    css = logged_in.get("/static/keo.css").text
-    assert ".btn-primary,\n.btn.active" in css
-    assert ".library-select" in css
-    assert "repeat(auto-fill, minmax(var(--cover, 160px), 1fr))" in css
-
-
-def test_song_page_uses_datagrid_and_human_size(logged_in, library, tmp_path, monkeypatch):
-    audio = _file(library, tmp_path)
+def test_song_api_uses_human_size(logged_in, library, tmp_path, monkeypatch):
+    _file(library, tmp_path)
     monkeypatch.setattr(
         "keo.web.routes_library.load",
         lambda path: AudioView("Opus · 251 kbps", (("Format", "Opus"), ("Bitrate", "251 kbps"))),
     )
-    html = logged_in.get("/library/spotify/sp1").text
-    assert 'class="datagrid"' in html
-    assert "0 KB" in html
-    assert "bytes" not in html
-    assert "btn-outline-danger" in html
+    song = logged_in.get("/api/library/spotify/sp1").json()["song"]
+    assert song["size_human"] == "0 KB"
+    assert "bytes" not in song["size_human"]

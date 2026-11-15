@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from typing import Annotated
 
 from keo.config import (
@@ -34,11 +34,15 @@ from keo.system import (
     last_backup_date,
     run_health_checks,
 )
-from keo.web.deps import TEMPLATES, get_services, require_page
+from keo.web.deps import get_services, require_page
 
 router = APIRouter()
-PAGE = {"response_class": HTMLResponse, "dependencies": [Depends(require_page)]}
+PAGE = {"dependencies": [Depends(require_page)]}
 COOKIE_LIMIT = 1048576
+
+
+def _settings_error(detail: str) -> JSONResponse:
+    return JSONResponse({"detail": detail}, status_code=400)
 
 _CHOICES = (
     ("Format", "format", FORMATS),
@@ -154,27 +158,18 @@ def _context(request: Request, error: str | None = None) -> dict:
     }
 
 
-@router.get("/settings", **PAGE)
-def settings_page(request: Request):
-    return TEMPLATES.TemplateResponse(request, "settings.html", _context(request))
-
-
 @router.post("/settings", **PAGE)
 async def save_settings(request: Request):
     services = get_services(request)
     if services.config_path is None:
-        return TEMPLATES.TemplateResponse(
-            request, "settings.html", _context(request, "Kéo has no config file."), status_code=400
-        )
+        return _settings_error("Kéo has no config file.")
     form = await request.form()
     valid_keys = set(BUTTONS) | {"recycle_days"}
     posted = [
         (key, value) for key, value in form.items() if key in valid_keys and isinstance(value, str)
     ]
     if len(posted) != 1:
-        return TEMPLATES.TemplateResponse(
-            request, "settings.html", _context(request, "Choose one setting."), status_code=400
-        )
+        return _settings_error("Choose one setting.")
     name, value = posted[0]
     try:
         if name == "recycle_days":
@@ -183,16 +178,9 @@ async def save_settings(request: Request):
             updated = save_choice(services.config_path, services.spotdl.settings, name, value)
             services.spotdl.use(updated)
     except ConfigError as exc:
-        return TEMPLATES.TemplateResponse(
-            request, "settings.html", _context(request, str(exc)), status_code=400
-        )
+        return _settings_error(str(exc))
     except OSError as exc:
-        return TEMPLATES.TemplateResponse(
-            request,
-            "settings.html",
-            _context(request, f"keo.toml could not be saved: {exc}"),
-            status_code=400,
-        )
+        return _settings_error(f"keo.toml could not be saved: {exc}")
     return RedirectResponse("/settings", status_code=303)
 
 
@@ -200,34 +188,21 @@ async def save_settings(request: Request):
 async def upload_cookie(request: Request, cookie: UploadFile):
     services = get_services(request)
     if services.config_path is None:
-        return TEMPLATES.TemplateResponse(
-            request, "settings.html", _context(request, "Kéo has no config file."), status_code=400
-        )
+        return _settings_error("Kéo has no config file.")
     if services.data_dir is None:
-        return TEMPLATES.TemplateResponse(
-            request, "settings.html", _context(request, "Kéo has no data directory."), status_code=400
-        )
+        return _settings_error("Kéo has no data directory.")
     raw = await cookie.read()
     if len(raw) > COOKIE_LIMIT:
-        return TEMPLATES.TemplateResponse(
-            request, "settings.html", _context(request, "The file is too large."), status_code=400
-        )
+        return _settings_error("The file is too large.")
     if not raw.strip():
-        return TEMPLATES.TemplateResponse(
-            request, "settings.html", _context(request, "The file is empty."), status_code=400
-        )
+        return _settings_error("The file is empty.")
     path = services.data_dir / "cookies.txt"
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(raw)
         updated = save_cookie_file(services.config_path, services.spotdl.settings, path)
     except OSError as exc:
-        return TEMPLATES.TemplateResponse(
-            request,
-            "settings.html",
-            _context(request, f"The cookie file could not be saved: {exc}"),
-            status_code=400,
-        )
+        return _settings_error(f"The cookie file could not be saved: {exc}")
     services.spotdl.use(updated)
     services.cookies.check(str(path))
     return RedirectResponse("/settings", status_code=303)
@@ -250,15 +225,11 @@ def save_integrations_route(
 ):
     services = get_services(request)
     if services.config_path is None:
-        return TEMPLATES.TemplateResponse(
-            request, "settings.html", _context(request, "Kéo has no config file."), status_code=400
-        )
+        return _settings_error("Kéo has no config file.")
     try:
         notify, refresh = save_integrations(services.config_path, notify_url, media_refresh_url)
     except ConfigError as exc:
-        return TEMPLATES.TemplateResponse(
-            request, "settings.html", _context(request, str(exc)), status_code=400
-        )
+        return _settings_error(str(exc))
     services.notify_url = notify
     services.media_refresh_url = refresh
     return RedirectResponse("/settings", status_code=303)

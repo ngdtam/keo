@@ -1,4 +1,4 @@
-"""The FastAPI app: phone pages and the JSON API behind one token."""
+"""The FastAPI app: SPA hosting and JSON API behind one token."""
 
 from __future__ import annotations
 
@@ -12,17 +12,14 @@ from fastapi.staticfiles import StaticFiles
 
 from keo.catalog import CatalogError
 from keo.web.auth import is_authorized
-from keo.web.deps import TEMPLATES, LoginRequired, Services
+from keo.web.deps import LoginRequired, Services
 from keo.web.routes_api import router as api_router
-from keo.web.routes_home import router as home_router
 from keo.web.routes_library import router as library_router
-from keo.web.routes_login import router as login_router
 from keo.web.routes_queue import router as queue_router
 from keo.web.routes_search import router as search_router
 from keo.web.routes_browse import router as browse_router
 from keo.web.routes_settings import router as settings_router
 
-STATIC_DIR = Path(__file__).parent / "static"
 UI_DIST_DIR = Path(__file__).parent / "ui_dist"
 SPA_ROUTES = (
     "/",
@@ -51,7 +48,6 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(title="Kéo", lifespan=lifespan)
     app.state.services = services
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     if serve_ui is None:
         serve_ui = (
@@ -73,7 +69,7 @@ def create_app(
             app.get(path, include_in_schema=False)(spa_index)
 
     for router in (
-        api_router, login_router, home_router, search_router, browse_router,
+        api_router, search_router, browse_router,
         queue_router, library_router, settings_router,
     ):
         app.include_router(router)
@@ -84,11 +80,6 @@ def create_app(
 
     @app.exception_handler(CatalogError)
     async def catalog_failed(request: Request, exc: CatalogError):
-        reason = str(exc)[:300]
-        if request.url.path.startswith("/api/"):
-            return JSONResponse({"detail": reason}, status_code=502)
-        return TEMPLATES.TemplateResponse(
-            request, "error.html", {"message": reason}, status_code=502
-        )
+        return JSONResponse({"detail": str(exc)[:300]}, status_code=502)
 
     return app

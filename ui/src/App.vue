@@ -6,12 +6,14 @@ import { apiGet, apiPostJson } from './api'
 
 interface SidebarDashboard {
   nav_review_count?: number
+  nav_active_jobs_count?: number
   nav_settings_warn?: boolean
 }
 
 const route = useRoute()
 const router = useRouter()
 const reviewCount = ref(0)
+const activeJobsCount = ref(0)
 const settingsWarn = ref(false)
 
 async function refreshSidebar() {
@@ -20,11 +22,24 @@ async function refreshSidebar() {
   try {
     const data = await apiGet<SidebarDashboard>('/api/dashboard')
     reviewCount.value = data.nav_review_count ?? 0
+    activeJobsCount.value = data.nav_active_jobs_count ?? 0
     settingsWarn.value = Boolean(data.nav_settings_warn)
   } catch {
     // 401 redirects to /login; other errors leave prior badge state
   }
 }
+
+function goSearch() {
+  if (route.path !== '/search') {
+    router.push('/search')
+  } else {
+    document.querySelector<HTMLInputElement>('#search input')?.focus()
+  }
+}
+
+defineShortcuts({
+  meta_k: goSearch,
+})
 
 watch(() => route.path, refreshSidebar, { immediate: true })
 
@@ -40,7 +55,15 @@ const navItems = computed<NavigationMenuItem[]>(() => [
     to: '/review',
     badge: reviewCount.value > 0 ? String(reviewCount.value) : undefined,
   },
-  { label: 'Activity', icon: 'i-lucide-activity', to: '/activity' },
+  {
+    label: 'Activity',
+    icon: 'i-lucide-activity',
+    to: '/activity',
+    badge:
+      activeJobsCount.value > 0
+        ? { label: String(activeJobsCount.value), color: 'primary' }
+        : undefined,
+  },
   {
     label: 'Settings',
     icon: 'i-lucide-settings',
@@ -69,6 +92,8 @@ async function signOut() {
         </template>
 
         <template #default="{ collapsed }">
+          <UDashboardSearchButton :collapsed="collapsed" class="mb-2" @click="goSearch" />
+
           <UNavigationMenu
             :collapsed="collapsed"
             :items="navItems"
@@ -79,7 +104,7 @@ async function signOut() {
         <template #footer="{ collapsed }">
           <div class="flex flex-col gap-2 w-full">
             <div class="flex items-center justify-between gap-2">
-              <UColorModeButton />
+              <UColorModeSelect size="xs" />
               <UButton
                 v-if="!collapsed"
                 color="neutral"

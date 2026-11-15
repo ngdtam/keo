@@ -1,5 +1,3 @@
-import re
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -7,13 +5,6 @@ from keo.config import SpotdlSettings
 from keo.cookies import ProbeResult
 from keo.web import Services, create_app
 from tests.fakes import TOKEN
-
-
-def button(html, name, value):
-    for tag in re.findall(r"<button\b[^>]*>", html):
-        if f'name="{name}"' in tag and f'value="{value}"' in tag:
-            return tag
-    return ""
 
 
 @pytest.fixture
@@ -49,32 +40,31 @@ def page(catalog, library, worker, spotdl, config_file, auth_file, cookies):
         data_dir=config_file.parent,
     )
     with TestClient(create_app(services)) as client:
-        client.post("/login", data={"token": TOKEN})
+        client.post("/api/auth/login", json={"token": TOKEN})
         yield client
 
 
-def test_settings_without_a_session_redirects_to_login(client):
-    response = client.get("/settings", follow_redirects=False)
-    assert response.status_code == 303
-    assert response.headers["location"] == "/login"
+def test_settings_api_requires_session(client):
+    assert client.get("/api/settings").status_code == 401
 
 
-def test_settings_page_names_a_missing_header_and_hides_its_value(page):
-    response = page.get("/settings")
+def test_settings_api_names_a_missing_header_and_hides_its_value(page):
+    response = page.get("/api/settings")
     assert response.status_code == 200
-    assert "x-goog-authuser" in response.text
+    data = response.json()
+    assert any("x-goog-authuser" in g for g in data["gaps"])
     assert "SID=do-not-show" not in response.text
-    assert "Cookie file missing" in response.text
-    assert "disabled" in button(response.text, "format", "opus")
-    assert 'class="active btn"' in button(response.text, "format", "mp3")
-    assert 'aria-pressed="true"' in button(response.text, "format", "mp3")
-    assert 'href="/settings"' in response.text
+    assert data["cookie_line"] == "Cookie file missing"
+    format_group = next(g for g in data["groups"] if g["title"] == "Format")
+    choices = {c["value"]: c for c in format_group["choices"]}
+    assert choices["opus"]["disabled"] is True
+    assert choices["mp3"]["selected"] is True
 
 
 def test_premium_tap_without_a_cookie_file_changes_nothing(page, config_file, spotdl):
     response = page.post("/settings", data={"format": "opus"})
     assert response.status_code == 400
-    assert "cookie" in response.text
+    assert "cookie" in response.json()["detail"].lower()
     assert config_file.read_text(encoding="utf-8") == '# keep this\nformat = "mp3"\nbitrate = "128k"\n'
     assert spotdl.settings.format == "mp3"
 
@@ -91,8 +81,8 @@ def test_a_normal_tap_saves_the_line_and_the_next_download(page, config_file, sp
 
 def test_current_premium_choice_without_a_cookie_file_is_shown(page, spotdl):
     spotdl.settings = SpotdlSettings(format="opus")
-    response = page.get("/settings")
-    assert "format is opus, which needs a cookie file" in response.text
+    data = page.get("/api/settings").json()
+    assert any("format is opus, which needs a cookie file" in w for w in data["warnings"])
 
 
 def test_cookie_upload_writes_the_file_and_hides_the_bytes(page, config_file, spotdl, probe):
@@ -107,9 +97,9 @@ def test_cookie_upload_writes_the_file_and_hides_the_bytes(page, config_file, sp
     assert stored.read_bytes() == b"cookie-marker"
     assert f'cookie_file = "{stored}"' in config_file.read_text(encoding="utf-8")
     assert spotdl.settings.cookie_file == str(stored)
-    html = page.get("/settings").text
-    assert "Premium" in html
-    assert "cookie-marker" not in html
+    res = page.get("/api/settings")
+    assert "Premium" in res.json()["cookie_line"]
+    assert "cookie-marker" not in res.text
     assert probe.calls == [str(stored)]
 
 
@@ -117,13 +107,13 @@ def test_empty_or_huge_cookie_upload_changes_nothing(page, config_file, probe):
     before = config_file.read_text(encoding="utf-8")
     empty = page.post("/settings/cookie", files={"cookie": ("cookies.txt", b"  \n", "text/plain")})
     assert empty.status_code == 400
-    assert "The file is empty." in empty.text
+    assert empty.json()["detail"] == "The file is empty."
     huge = page.post(
         "/settings/cookie",
         files={"cookie": ("cookies.txt", b"x" * 1048577, "text/plain")},
     )
     assert huge.status_code == 400
-    assert "The file is too large." in huge.text
+    assert huge.json()["detail"] == "The file is too large."
     assert config_file.read_text(encoding="utf-8") == before
     assert not (config_file.parent / "cookies.txt").exists()
     assert probe.calls == []
@@ -138,14 +128,14 @@ def test_opus_is_saved_when_the_cookie_file_exists(page, config_file, spotdl, tm
     assert 'format = "opus"' in config_file.read_text(encoding="utf-8")
     assert "# keep this" in config_file.read_text(encoding="utf-8")
     assert spotdl.settings.format == "opus"
-    assert "Cookie file found" in page.get("/settings").text
+    assert "Cookie file found" in page.get("/api/settings").json()["cookie_line"]
 
 
 def test_check_cookie_without_a_file_does_not_probe(page, probe):
     response = page.post("/settings/cookie/check", follow_redirects=False)
     assert response.status_code == 303
     assert response.headers["location"] == "/settings"
-    assert "Cookie file missing" in page.get("/settings").text
+    assert page.get("/api/settings").json()["cookie_line"] == "Cookie file missing"
     assert probe.calls == []
 
 
@@ -156,7 +146,7 @@ def test_check_cookie_stores_a_free_verdict(page, config_file, spotdl, probe, tm
     probe.results.append(ProbeResult([{"format_id": "251"}], ""))
     response = page.post("/settings/cookie/check", follow_redirects=False)
     assert response.status_code == 303
-    assert "Account is not Premium" in page.get("/settings").text
+    assert "Account is not Premium" in page.get("/api/settings").json()["cookie_line"]
     assert probe.calls == [str(path)]
 
 
@@ -165,9 +155,10 @@ def test_a_failed_check_keeps_the_failed_line(page, spotdl, probe, tmp_path):
     path.write_text("a", encoding="utf-8")
     spotdl.settings = SpotdlSettings(format="opus", cookie_file=str(path))
     probe.results.append(ProbeResult(None, "timed out"))
-    page.post("/settings/cookie/check", follow_redirects=True)
-    assert "Cookie check failed" in page.get("/settings").text
-    assert "format is opus, which needs a cookie file" not in page.get("/settings").text
+    page.post("/settings/cookie/check", follow_redirects=False)
+    data = page.get("/api/settings").json()
+    assert "Cookie check failed" in data["cookie_line"]
+    assert not any("format is opus, which needs a cookie file" in w for w in data["warnings"])
 
 
 def test_settings_saves_recycle_days(page, config_file):
@@ -175,9 +166,7 @@ def test_settings_saves_recycle_days(page, config_file):
     assert resp.status_code == 303
     assert "recycle_days = 30" in config_file.read_text(encoding="utf-8")
     assert page.app.state.services.recycle_days == 30
-    html = page.get("/settings").text
-    assert 'class="active btn"' in button(html, "recycle_days", "30")
-    assert 'aria-pressed="true"' in button(html, "recycle_days", "30")
+    assert page.get("/api/settings").json()["recycle_days"] == 30
 
 
 def test_settings_integrations_saves_urls(page, config_file):
@@ -198,11 +187,9 @@ def test_settings_integrations_saves_urls(page, config_file):
 
 
 def test_settings_shows_system_health_and_runs_backup(page, tmp_path):
-    res = page.get("/settings")
+    res = page.get("/api/settings")
     assert res.status_code == 200
-    assert "System" in res.text
-    assert "yt-dlp" in res.text
-    assert "Run backup now" in res.text
+    assert any("yt-dlp" in c[1] for c in res.json()["health_checks"])
 
     backup_res = page.post("/settings/backup", follow_redirects=False)
     assert backup_res.status_code == 303
@@ -221,20 +208,21 @@ def test_settings_check_updates_renders_latest_versions(page, monkeypatch):
             "pymediainfo": ("7.0.1", "7.0.2", True),
         },
     )
-    resp = page.post("/settings/check-updates")
-    assert resp.status_code == 200
-    assert "yt-dlp:" in resp.text and "latest 2026.11.10" in resp.text
-    assert "ytmusicapi:" in resp.text and "up to date" in resp.text
-    assert "spotdl:" in resp.text and "up to date" in resp.text
-    assert "mediainfo (pymediainfo):" in resp.text and "latest 7.0.2" in resp.text
+    resp = page.post("/settings/check-updates", follow_redirects=False)
+    assert resp.status_code == 303
+    updates = page.app.state.services.package_updates
+    assert updates["yt-dlp"] == ("2026.10.21", "2026.11.10", True)
+    assert updates["ytmusicapi"] == ("1.12.4", "1.12.4", False)
+    assert updates["spotdl"] == ("4.6.0", "4.6.0", False)
+    assert updates["pymediainfo"] == ("7.0.1", "7.0.2", True)
 
 
 def test_settings_shows_scheduled_tasks_and_runs_one(page, library):
-    res = page.get("/settings")
+    res = page.get("/api/settings")
     assert res.status_code == 200
-    assert "Scheduled tasks" in res.text
-    assert "housekeeping" in res.text
-    assert "backup" in res.text
+    task_names = {t["name"] for t in res.json()["tasks"]}
+    assert "housekeeping" in task_names
+    assert "backup" in task_names
 
     run_res = page.post("/settings/tasks/housekeeping/run", follow_redirects=False)
     assert run_res.status_code == 303

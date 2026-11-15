@@ -1,4 +1,4 @@
-"""Pieces every route uses: the services, the token checks, and the templates."""
+"""Pieces every route uses: the services and the token checks."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException, Request
-from fastapi.templating import Jinja2Templates
 
 from keo.catalog import Catalog
 from keo.cookies import CookieGate
@@ -23,17 +22,16 @@ from keo.web.auth import is_authorized
 def _sidebar_status(request: Request) -> dict[str, Any]:
     services = getattr(getattr(request.app, "state", None), "services", None)
     if services is None:
-        return {"nav_review_count": 0, "nav_settings_warn": False}
+        return {"nav_review_count": 0, "nav_active_jobs_count": 0, "nav_settings_warn": False}
     review_count = len(services.library.list_review())
+    active_jobs_count = services.library.count_active_jobs()
     backoff = services.worker.backoff_status()
     warn = bool(backoff.get("active")) or services.ytm_auth is None
-    return {"nav_review_count": review_count, "nav_settings_warn": warn}
-
-
-TEMPLATES = Jinja2Templates(
-    directory=Path(__file__).parent / "templates",
-    context_processors=[_sidebar_status],
-)
+    return {
+        "nav_review_count": review_count,
+        "nav_active_jobs_count": active_jobs_count,
+        "nav_settings_warn": warn,
+    }
 
 
 def _start_thread(fn: Callable[[], object]) -> None:

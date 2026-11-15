@@ -79,6 +79,7 @@ async function download(song: SongItem) {
           </UButton>
         </div>
       </div>
+      <UProgress v-if="queued[song.video_id]" size="xs" color="primary" class="mt-2" />
     </UCard>
   </div>
 </template>

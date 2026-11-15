@@ -10,21 +10,15 @@ def test_api_needs_the_token(client):
     assert client.post("/api/downloads", json=BODY).status_code == 401
 
 
-def test_page_without_a_session_redirects_to_login(client):
-    response = client.get("/", follow_redirects=False)
-    assert response.status_code == 303
-    assert response.headers["location"] == "/login"
-
-
 def test_wrong_token_at_login_is_401(client):
-    response = client.post("/login", data={"token": "wrong"})
+    response = client.post("/api/auth/login", json={"token": "wrong"})
     assert response.status_code == 401
-    assert "Wrong token" in response.text
+    assert "Invalid token" in response.json()["detail"]
 
 
 def test_login_sets_a_30_day_session_cookie(client):
-    response = client.post("/login", data={"token": TOKEN}, follow_redirects=False)
-    assert response.status_code == 303
+    response = client.post("/api/auth/login", json={"token": TOKEN})
+    assert response.status_code == 200
     cookie = response.headers["set-cookie"]
     assert "keo_session=" in cookie
     assert "HttpOnly" in cookie
@@ -40,13 +34,6 @@ def test_search_api_returns_songs(client, auth):
 def test_suggestions_api(client, auth):
     response = client.get("/api/suggestions", params={"q": "lac"}, headers=auth)
     assert response.json() == ["lac remix"]
-
-
-def test_search_page_lists_songs_with_a_download_button(logged_in):
-    response = logged_in.get("/search", params={"q": "lac"})
-    assert response.status_code == 200
-    assert "Lạc Trôi" in response.text
-    assert "data-download" in response.text
 
 
 def test_download_api_queues_once(client, auth):
@@ -71,11 +58,3 @@ def test_youtube_music_failure_is_502(client, auth, catalog):
     response = client.get("/api/search", params={"q": "lac"}, headers=auth)
     assert response.status_code == 502
     assert "offline" in response.json()["detail"]
-
-
-def test_youtube_music_failure_page_shows_the_reason(logged_in, catalog):
-    catalog.fail = True
-    response = logged_in.get("/search", params={"q": "lac"})
-    assert response.status_code == 502
-    assert "offline" in response.text
-    assert "navbar-nav" in response.text

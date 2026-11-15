@@ -383,6 +383,20 @@ const progressLabel = computed(() => {
       <div class="flex flex-col gap-4">
         <UAlert v-if="error" color="error" variant="subtle" :description="error" />
 
+        <UCard v-if="!videoId && progress.active">
+          <div class="flex flex-col gap-2">
+            <span class="text-xs font-medium text-muted">{{ progressLabel }}</span>
+            <UProgress
+              v-if="progress.total > 0"
+              v-model="progress.current"
+              :max="progress.total"
+              status
+              size="sm"
+            />
+            <UProgress v-else size="sm" />
+          </div>
+        </UCard>
+
         <!-- Pick match mode -->
         <template v-if="videoId">
           <p v-if="loading && !pickData" class="text-sm text-muted">Loading candidates…</p>

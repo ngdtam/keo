@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { apiGet } from '../api'
 import SongList, { type SongItem } from '../components/SongList.vue'
@@ -8,6 +8,12 @@ const route = useRoute()
 const router = useRouter()
 
 const query = ref('')
+const searchInput = ref<{ inputRef?: HTMLInputElement | null } | null>(null)
+
+onMounted(async () => {
+  await nextTick()
+  searchInput.value?.inputRef?.focus()
+})
 const suggestions = ref<string[]>([])
 const songs = ref<SongItem[]>([])
 const searching = ref(false)
@@ -92,6 +98,7 @@ function submitSearch() {
       <UDashboardToolbar>
         <form class="flex items-center gap-2 w-full" @submit.prevent="submitSearch">
           <UInput
+            ref="searchInput"
             v-model="query"
             placeholder="Search songs..."
             icon="i-lucide-search"

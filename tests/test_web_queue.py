@@ -82,31 +82,34 @@ def test_job_time_uses_the_configured_zone():
     assert format_job_time("2026-11-07T15:00:00+00:00", "Asia/Ho_Chi_Minh") == "2026-11-07, 22:00"
 
 
-def test_jobs_page_shows_a_new_pull(logged_in, library):
+def test_jobs_api_shows_a_new_pull(logged_in, library):
     job = library.enqueue("vid9", "Đen", "Pulled", source="manual", format="opus", premium=1)
-    text = logged_in.get(f"/library/video/{job.video_id}").text
-    assert format_job_time(job.updated_at, "Asia/Ho_Chi_Minh") in text
-    assert "opus · .opus · Premium" in text
+    data = logged_in.get(f"/api/library/video/{job.video_id}").json()
+    job_line = data["jobs"][0]["line"]
+    assert format_job_time(job.updated_at, "Asia/Ho_Chi_Minh") in job_line
+    assert "opus · .opus · Premium" in job_line
 
 
-def test_jobs_page_hides_pull_facts_when_they_were_not_stored(logged_in, library):
+def test_jobs_api_hides_pull_facts_when_they_were_not_stored(logged_in, library):
     job = library.enqueue("vid8", "Đen", "Old Song", source="manual")
-    text = logged_in.get(f"/library/video/{job.video_id}").text
-    assert format_job_time(job.updated_at, "Asia/Ho_Chi_Minh") in text
-    assert "Premium" not in text
-    assert ".mp3" not in text
+    data = logged_in.get(f"/api/library/video/{job.video_id}").json()
+    job_line = data["jobs"][0]["line"]
+    assert format_job_time(job.updated_at, "Asia/Ho_Chi_Minh") in job_line
+    assert "Premium" not in job_line
+    assert ".mp3" not in job_line
 
 
-def test_review_and_jobs_pages(logged_in, library, worker):
+def test_review_and_jobs_apis(logged_in, library, worker):
     add_weak_row(library)
     worker.submit("vid2", "Đen", "Bài Này Chill Phết")
-    review = logged_in.get("/review")
+    review = logged_in.get("/api/review/full")
     assert review.status_code == 200
-    assert "Lạc Trôi" in review.text
+    assert review.json()["review"][0]["heard_title"] == "Lạc Trôi"
     jobs = logged_in.get("/jobs", follow_redirects=False)
     assert jobs.status_code == 303
     assert jobs.headers["location"] == "/library"
-    assert "Bài Này Chill Phết" in logged_in.get("/library").text
+    lib_rows = logged_in.get("/api/library").json()["rows"]
+    assert any(r["title"] == "Bài Này Chill Phết" for r in lib_rows)
 
 
 from keo.config import SpotdlSettings
@@ -254,26 +257,6 @@ def test_history_pull_triggers_background_pull(client, auth, catalog, library, w
     assert "Manual history pull requested via API" in caplog.text
 
 
-def test_review_page_renders_check_history_button(logged_in, library):
-    library.add_review("vid1", "Artist", "Title", reason="weak_match")
-    response = logged_in.get("/review")
-    assert response.status_code == 200
-    assert 'data-post="/api/history/pull"' in response.text
-    assert "Check history now" in response.text
-    assert '<span class="badge bg-primary-lt ms-auto">1</span>' in response.text
-    assert "col-lg-6" in response.text
-
-
-def test_keo_js_contains_history_and_job_polling(client):
-    response = client.get("/static/keo.js")
-    assert response.status_code == 200
-    assert "pollHistoryStatus" in response.text
-    assert "pollJobs" in response.text
-    assert "/api/history/status" in response.text
-    assert "/pick" in response.text
-    assert "Pick match" in response.text
-
-
 def test_dismiss_review_requires_token(client):
     assert client.post("/api/review/vid1/dismiss").status_code == 401
 
@@ -284,26 +267,6 @@ def test_dismiss_review_removes_item(client, auth, library):
     assert response.status_code == 200
     assert response.json() == {"status": "dismissed"}
     assert library.get_review("vid1") is None
-
-
-def test_review_page_renders_dismiss_button_and_status(logged_in, library):
-    library.add_review("vid1", "Sơn Tùng M-TP", "Lạc Trôi", reason="close_match", spotify_url=URL)
-    response = logged_in.get("/review")
-    assert response.status_code == 200
-    assert 'data-dismiss="/api/review/vid1/dismiss"' in response.text
-    assert "Dismiss" in response.text
-    assert "Not in library" in response.text
-    assert "status-dot bg-red" in response.text
-
-
-def test_review_page_renders_download_and_dismiss_buttons(logged_in, library):
-    library.add_review("vid_pending", "Low G", "Simp Gái 808", reason="pending")
-    response = logged_in.get("/review")
-    assert response.status_code == 200
-    assert 'data-post="/api/review/vid_pending/download"' in response.text
-    assert 'data-dismiss="/api/review/vid_pending/dismiss"' in response.text
-    assert "Download" in response.text
-    assert "Dismiss" in response.text
 
 
 def test_review_download_youtube_enqueues_job(client, auth, library):
@@ -370,13 +333,12 @@ def test_review_follow_sync_and_unfollow_artist_routes(logged_in, library):
     assert library.list_followed_artists() == []
 
 
-def test_activity_page_lists_recorded_events(logged_in, library):
+def test_activity_api_lists_recorded_events(logged_in, library):
     library.record_event("Sơn Tùng M-TP - Lạc Trôi", "downloaded", "manual")
-    res = logged_in.get("/activity")
+    res = logged_in.get("/api/activity")
     assert res.status_code == 200
-    assert "Activity" in res.text
-    assert "Sơn Tùng M-TP - Lạc Trôi" in res.text
-    assert "downloaded" in res.text
+    events = res.json()["history"]
+    assert any(e["song"] == "Sơn Tùng M-TP - Lạc Trôi" and e["kind"] == "downloaded" for e in events)
 
 
 def test_review_pick_match_lists_candidates_and_queues_chosen(logged_in, library, catalog):
@@ -388,10 +350,11 @@ def test_review_pick_match_lists_candidates_and_queues_chosen(logged_in, library
         SongRow("alt_vid_2", "Lac Troi (Remix)", ("Son Tung M-TP",), "Remix"),
     ]
 
-    pick_page = logged_in.get("/review/orig_vid/pick")
-    assert pick_page.status_code == 200
-    assert "Lac Troi (Official)" in pick_page.text
-    assert "Lac Troi (Remix)" in pick_page.text
+    candidates_res = logged_in.get("/api/review/orig_vid/candidates")
+    assert candidates_res.status_code == 200
+    titles = [c["title"] for c in candidates_res.json()["candidates"]]
+    assert "Lac Troi (Official)" in titles
+    assert "Lac Troi (Remix)" in titles
 
     chosen = logged_in.post(
         "/review/orig_vid/pick",

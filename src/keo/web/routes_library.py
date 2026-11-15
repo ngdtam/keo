@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 
 from keo.audio_info import cover_bytes, load
 from keo.library import Job, Song, inside_music, unique_title_file
@@ -20,11 +20,11 @@ from keo.recycle import (
     restore_from_recycle,
 )
 from keo.scan import organize_library, plan_organize, scan
-from keo.web.deps import TEMPLATES, get_services, require_api, require_download, require_page
+from keo.web.deps import get_services, require_api, require_download, require_page
 from keo.web.routes_queue import _detail, format_job_time, queued
 
 router = APIRouter()
-PAGE = {"response_class": HTMLResponse, "dependencies": [Depends(require_page)]}
+PAGE = {"dependencies": [Depends(require_page)]}
 API = {"dependencies": [Depends(require_api)]}
 
 
@@ -261,16 +261,6 @@ def _library_page_data(services, filter: str = "all", q: str = "", sort: str = "
     }
 
 
-@router.get("/library", **PAGE)
-def library_page(request: Request, filter: str = "all", q: str = "", sort: str = "artist"):
-    services = get_services(request)
-    return TEMPLATES.TemplateResponse(
-        request,
-        "library.html",
-        _library_page_data(services, filter=filter, q=q, sort=sort),
-    )
-
-
 @router.post("/library/rescan", **PAGE)
 def rescan_library(request: Request):
     services = get_services(request)
@@ -298,12 +288,6 @@ def _plan_organize(services) -> list[dict]:
                 }
             )
     return moves
-
-
-@router.get("/library/organize/preview", **PAGE)
-def organize_preview_route(request: Request):
-    services = get_services(request)
-    return TEMPLATES.TemplateResponse(request, "organize_preview.html", {"moves": _plan_organize(services)})
 
 
 @router.post("/library/organize", **PAGE)
@@ -394,17 +378,6 @@ def link_manual_song(
     return RedirectResponse(f"/library/video/{linked.video_id}", status_code=303)
 
 
-@router.get("/library/trash", **PAGE)
-def trash_page(request: Request):
-    services = get_services(request)
-    items = list_recycle(services.music_dir) if services.music_dir is not None else []
-    return TEMPLATES.TemplateResponse(
-        request,
-        "trash.html",
-        {"items": items, "recycle_days": services.recycle_days, "format_bytes": _format_bytes},
-    )
-
-
 @router.post("/library/trash/restore", **PAGE)
 def trash_restore(request: Request, name: Annotated[str, Form()]):
     services = get_services(request)
@@ -461,30 +434,6 @@ def _song_view(services, kind: str, ident: str) -> tuple[SimpleNamespace, list[S
     return row, _job_lines(services, jobs)
 
 
-@router.get("/library/spotify/{spotify_id}", **PAGE)
-def spotify_song(request: Request, spotify_id: str):
-    row, jobs = _song_view(get_services(request), "spotify", spotify_id)
-    return TEMPLATES.TemplateResponse(
-        request, "song.html", {"song": row, "jobs": jobs}
-    )
-
-
-@router.get("/library/video/{video_id}", **PAGE)
-def video_song(request: Request, video_id: str):
-    row, jobs = _song_view(get_services(request), "video", video_id)
-    return TEMPLATES.TemplateResponse(
-        request, "song.html", {"song": row, "jobs": jobs}
-    )
-
-
-@router.get("/library/song/{song_id:int}", **PAGE)
-def local_song(request: Request, song_id: int):
-    row, jobs = _song_view(get_services(request), "song", str(song_id))
-    return TEMPLATES.TemplateResponse(
-        request, "song.html", {"song": row, "jobs": jobs}
-    )
-
-
 @router.post("/library/{kind}/{ident}/delete", **PAGE)
 def delete_song(request: Request, kind: str, ident: str, scope: Annotated[str, Form()] = ""):
     if kind not in ("spotify", "video", "song"):
@@ -495,17 +444,7 @@ def delete_song(request: Request, kind: str, ident: str, scope: Annotated[str, F
     if not jobs and song is None:
         raise HTTPException(status_code=404, detail="Unknown song")
     if scope == "library" and any(job.status in {"queued", "running"} for job in jobs):
-        row = _row(services, (kind, ident), jobs, song=song)
-        return TEMPLATES.TemplateResponse(
-            request,
-            "song.html",
-            {
-                "song": row,
-                "jobs": _job_lines(services, jobs),
-                "notice": "This song is still downloading.",
-            },
-            status_code=409,
-        )
+        return JSONResponse({"detail": "This song is still downloading."}, status_code=409)
     music = services.music_dir
     raw = song.audio_path if song is not None else services.library.audio_path(ident)
     path = Path(raw) if raw else None

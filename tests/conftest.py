@@ -89,5 +89,5 @@ def auth():
 
 @pytest.fixture
 def logged_in(client):
-    client.post("/login", data={"token": TOKEN})
+    client.post("/api/auth/login", json={"token": TOKEN})
     return client

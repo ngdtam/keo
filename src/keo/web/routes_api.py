@@ -15,8 +15,8 @@ from keo.catalog import CatalogError
 from keo.recycle import list_recycle
 from keo.web.auth import COOKIE_MAX_AGE, COOKIE_NAME, session_value
 from keo.web.deps import _sidebar_status, get_services, require_api, song_json
-from keo.web.routes_home import _dashboard_stats
 from keo.web.routes_library import (
+    _collect_rows,
     _format_bytes,
     _library_page_data,
     _plan_organize,
@@ -68,6 +68,35 @@ def api_logout(response: Response):
     return {"ok": True}
 
 
+def _dashboard_stats(services) -> dict:
+    jobs = services.library.list_jobs()
+    seen: set[str] = set()
+    attention = []
+    for job in jobs:
+        if job.status not in {"queued", "running", "failed"}:
+            continue
+        href = (
+            f"/library/spotify/{job.spotify_id}" if job.spotify_id
+            else f"/library/video/{job.video_id}"
+        )
+        if href in seen:
+            continue
+        seen.add(href)
+        attention.append({"href": href, "artist": job.artist, "title": job.title})
+    all_rows = _collect_rows(services)
+    library_size = _format_bytes(sum(r.size for r in all_rows if r.size))
+    missing_count = sum(1 for r in all_rows if not r.path and r.label not in {"Queued", "Downloading"})
+    return {
+        "review_count": len(services.library.list_review()),
+        "library_count": len(all_rows),
+        "library_size": library_size,
+        "missing_count": missing_count,
+        "active_count": sum(job.status in {"queued", "running"} for job in jobs),
+        "failed_count": sum(job.status == "failed" for job in jobs),
+        "attention": attention,
+    }
+
+
 @router.get("/api/dashboard", **API)
 def api_dashboard(request: Request):
     services = get_services(request)
@@ -80,6 +109,7 @@ def api_dashboard(request: Request):
         "gaps": list(ctx["gaps"]),
         "warnings": ctx["warnings"],
         "nav_review_count": sidebar["nav_review_count"],
+        "nav_active_jobs_count": sidebar["nav_active_jobs_count"],
         "nav_settings_warn": sidebar["nav_settings_warn"],
     }
 
