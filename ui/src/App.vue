@@ -15,6 +15,7 @@ const reviewCount = ref(0)
 const settingsWarn = ref(false)
 
 async function refreshSidebar() {
+  await router.isReady()
   if (route.path === '/login') return
   try {
     const data = await apiGet<SidebarDashboard>('/api/dashboard')
