@@ -141,8 +141,16 @@ def test_api_library_detail_handles_spotify_and_404(client, auth, library):
 def test_spa_served_when_enabled(client):
     assert (UI_DIST_DIR / "index.html").is_file()
     with TestClient(create_app(client.app.state.services, serve_ui=True)) as spa:
+        login_res = spa.get("/login")
+        assert login_res.status_code == 200
+        assert '<div id="app"></div>' in login_res.text
+
+        unauth = spa.get("/library", follow_redirects=False)
+        assert unauth.status_code == 303
+        assert unauth.headers["location"] == "/login"
+
+        assert spa.post("/api/auth/login", json={"token": TOKEN}).status_code == 200
         for path in (
-            "/login",
             "/",
             "/library",
             "/library/spotify/sp1",
@@ -153,5 +161,6 @@ def test_spa_served_when_enabled(client):
             assert res.status_code == 200, path
             assert '<div id="app"></div>' in res.text, path
 
+        spa.cookies.clear()
         api_res = spa.get("/api/dashboard")
         assert api_res.status_code == 401

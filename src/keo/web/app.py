@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from keo.catalog import CatalogError
+from keo.web.auth import is_authorized
 from keo.web.deps import TEMPLATES, LoginRequired, Services
 from keo.web.routes_api import router as api_router
 from keo.web.routes_home import router as home_router
@@ -63,7 +64,9 @@ def create_app(
         if assets_dir.is_dir():
             app.mount("/assets", StaticFiles(directory=assets_dir), name="ui-assets")
 
-        async def spa_index():
+        async def spa_index(request: Request):
+            if request.url.path != "/login" and not is_authorized(request, services.token):
+                return RedirectResponse("/login", status_code=303)
             return FileResponse(index_html)
 
         for path in SPA_ROUTES:
