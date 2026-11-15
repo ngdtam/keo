@@ -3,10 +3,12 @@ import { createApp, defineComponent, h } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import ui from '@nuxt/ui/vue-plugin'
 import App from './App.vue'
+import BrowsePage from './pages/BrowsePage.vue'
 import HomePage from './pages/HomePage.vue'
 import LibraryPage from './pages/LibraryPage.vue'
 import LoginPage from './pages/LoginPage.vue'
 import OrganizePreviewPage from './pages/OrganizePreviewPage.vue'
+import SearchPage from './pages/SearchPage.vue'
 import SongDetailPage from './pages/SongDetailPage.vue'
 import TrashPage from './pages/TrashPage.vue'
 
@@ -26,9 +28,12 @@ const router = createRouter({
     { path: '/library/organize/preview', component: OrganizePreviewPage },
     { path: '/library/trash', component: TrashPage },
     { path: '/library/:kind/:ident', component: SongDetailPage },
-    { path: '/search', component: placeholder('Search') },
-    { path: '/charts', component: placeholder('Charts') },
-    { path: '/moods', component: placeholder('Moods') },
+    { path: '/search', component: SearchPage },
+    { path: '/charts', component: BrowsePage },
+    { path: '/moods', component: BrowsePage },
+    { path: '/moods/:params', component: BrowsePage },
+    { path: '/playlists/:id', component: BrowsePage },
+    { path: '/songs/:videoId/radio', component: BrowsePage },
     { path: '/review', component: placeholder('Review') },
     { path: '/activity', component: placeholder('Activity') },
     { path: '/settings', component: placeholder('Settings') },
