@@ -50,6 +50,10 @@ test('logs in and renders every deployed route without errors', async ({ page })
   await page.goto('/library');
   await expect(page.getByRole('button', { name: 'Rescan' })).toBeVisible();
 
+  await page.goto('/moods/ggMPOg1uX2RrdjJBOXNtbGE0');
+  await expect(page.locator('a[href^="/playlists/"]').first()).toBeVisible();
+  await expect(page.getByText('YouTube Music request failed')).toHaveCount(0);
+
   await page.goto('/settings');
   await expect(page.getByText('Audio & spotDL')).toBeVisible();
   await expect(page.getByText('YouTube Music & Cookies')).toBeVisible();

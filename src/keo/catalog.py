@@ -8,11 +8,26 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from ytmusicapi import OAuthCredentials, YTMusic
+from ytmusicapi.navigation import (
+    CAROUSEL_CONTENTS,
+    GRID_ITEMS,
+    NAVIGATION_BROWSE_ID,
+    SECTION_LIST,
+    SINGLE_COLUMN_TAB,
+    TITLE,
+    TITLE_TEXT,
+    nav,
+)
 
 from keo.records import HistoryItem, MoodRef, PlaylistRef, SongRow
 
 T = TypeVar("T")
 CHART_CAROUSELS = ("daily", "weekly", "videos")
+MOOD_SECTION_PATHS = (
+    ("gridRenderer", GRID_ITEMS),
+    ("musicCarouselShelfRenderer", CAROUSEL_CONTENTS),
+    ("musicImmersiveCarouselShelfRenderer", ["musicImmersiveCarouselShelfRenderer", "contents"]),
+)
 
 
 class CatalogError(Exception):
@@ -54,6 +69,14 @@ class Catalog:
         }
 
     def mood_playlists(self, params: str) -> list[PlaylistRef]:
+        # ytmusicapi.get_mood_playlists crashes on genre pages that include Songs or Music videos.
+        if isinstance(self._ytm, YTMusic):
+            data = self._call(
+                self._ytm._send_request,
+                "browse",
+                {"browseId": "FEmusic_moods_and_genres_category", "params": params},
+            )
+            return _mood_playlists_from_browse(data)
         return [
             PlaylistRef(item["playlistId"], item.get("title") or "")
             for item in self._call(self._ytm.get_mood_playlists, params)
@@ -141,3 +164,22 @@ def _song(item: dict[str, Any]) -> SongRow | None:
 
 def _songs(items: Iterable[dict[str, Any]]) -> list[SongRow]:
     return [song for song in map(_song, items) if song is not None]
+
+
+def _mood_playlists_from_browse(response: dict[str, Any]) -> list[PlaylistRef]:
+    playlists: list[PlaylistRef] = []
+    for section in nav(response, SINGLE_COLUMN_TAB + SECTION_LIST, none_if_absent=True) or []:
+        items = next(
+            (nav(section, path, none_if_absent=True) or [] for key, path in MOOD_SECTION_PATHS if key in section),
+            (),
+        )
+        for item in items:
+            renderer = item.get("musicTwoRowItemRenderer")
+            if not renderer:
+                continue
+            browse_id = nav(renderer, TITLE + NAVIGATION_BROWSE_ID, none_if_absent=True)
+            if not isinstance(browse_id, str) or not browse_id.startswith("VL"):
+                continue
+            title = nav(renderer, TITLE_TEXT, none_if_absent=True) or ""
+            playlists.append(PlaylistRef(browse_id[2:], title))
+    return playlists

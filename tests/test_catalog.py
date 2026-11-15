@@ -1,6 +1,6 @@
 import pytest
 
-from keo.catalog import Catalog, CatalogError
+from keo.catalog import Catalog, CatalogError, _mood_playlists_from_browse
 from keo.records import HistoryItem, MoodRef, PlaylistRef, SongRow
 
 TRACK = {
@@ -109,3 +109,54 @@ def test_ytmusicapi_errors_become_catalog_errors():
 
     with pytest.raises(CatalogError, match="network down"):
         Catalog(Broken()).search("x")
+
+
+def _two_row(title: str, browse_id: str | None) -> dict:
+    run: dict = {"text": title}
+    if browse_id is not None:
+        run["navigationEndpoint"] = {"browseEndpoint": {"browseId": browse_id}}
+    return {"musicTwoRowItemRenderer": {"title": {"runs": [run]}}}
+
+
+def test_mood_playlists_from_browse_skips_non_playlist_sections():
+    response = {
+        "contents": {
+            "singleColumnBrowseResultsRenderer": {
+                "tabs": [
+                    {
+                        "tabRenderer": {
+                            "content": {
+                                "sectionListRenderer": {
+                                    "contents": [
+                                        {
+                                            "musicCarouselShelfRenderer": {
+                                                "contents": [{"musicResponsiveListItemRenderer": {}}]
+                                            }
+                                        },
+                                        {
+                                            "musicCarouselShelfRenderer": {
+                                                "contents": [
+                                                    _two_row("Hotlist", "VLRDCLAK123"),
+                                                    _two_row("Music Video", None),
+                                                    _two_row("Some Album", "MPREb_abc"),
+                                                ]
+                                            }
+                                        },
+                                        {
+                                            "gridRenderer": {
+                                                "items": [_two_row("Grid Mix", "VLPL456")]
+                                            }
+                                        },
+                                    ]
+                                }
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+    }
+    assert _mood_playlists_from_browse(response) == [
+        PlaylistRef("RDCLAK123", "Hotlist"),
+        PlaylistRef("PL456", "Grid Mix"),
+    ]
