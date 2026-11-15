@@ -220,9 +220,7 @@ def _library_stats(rows: list[SimpleNamespace]) -> str:
     return " · ".join(parts)
 
 
-@router.get("/library", **PAGE)
-def library_page(request: Request, filter: str = "all", q: str = "", sort: str = "artist"):
-    services = get_services(request)
+def _library_page_data(services, filter: str = "all", q: str = "", sort: str = "artist") -> dict:
     settings = services.spotdl.settings
     all_rows = _collect_rows(services)
     missing_rows = [r for r in all_rows if not r.path and r.label not in {"Queued", "Downloading"}]
@@ -250,20 +248,26 @@ def library_page(request: Request, filter: str = "all", q: str = "", sort: str =
     else:
         sort = "artist"
         rows = sorted(rows, key=lambda r: ((r.artist or "").casefold(), (r.title or "").casefold()))
+    return {
+        "rows": rows,
+        "filter": filter,
+        "q": q,
+        "sort": sort,
+        "stats": _library_stats(all_rows),
+        "total_count": len(all_rows),
+        "missing_count": len(missing_rows),
+        "upgradable_count": len(upgradable_rows),
+        "unmatched_count": len(unmatched_rows),
+    }
+
+
+@router.get("/library", **PAGE)
+def library_page(request: Request, filter: str = "all", q: str = "", sort: str = "artist"):
+    services = get_services(request)
     return TEMPLATES.TemplateResponse(
         request,
         "library.html",
-        {
-            "rows": rows,
-            "filter": filter,
-            "q": q,
-            "sort": sort,
-            "stats": _library_stats(all_rows),
-            "total_count": len(all_rows),
-            "missing_count": len(missing_rows),
-            "upgradable_count": len(upgradable_rows),
-            "unmatched_count": len(unmatched_rows),
-        },
+        _library_page_data(services, filter=filter, q=q, sort=sort),
     )
 
 
@@ -275,9 +279,7 @@ def rescan_library(request: Request):
     return RedirectResponse("/library", status_code=303)
 
 
-@router.get("/library/organize/preview", **PAGE)
-def organize_preview_route(request: Request):
-    services = get_services(request)
+def _plan_organize(services) -> list[dict]:
     moves = []
     if services.music_dir is not None:
         settings = services.spotdl.settings
@@ -295,7 +297,13 @@ def organize_preview_route(request: Request):
                     "dst": str(target.relative_to(services.music_dir)),
                 }
             )
-    return TEMPLATES.TemplateResponse(request, "organize_preview.html", {"moves": moves})
+    return moves
+
+
+@router.get("/library/organize/preview", **PAGE)
+def organize_preview_route(request: Request):
+    services = get_services(request)
+    return TEMPLATES.TemplateResponse(request, "organize_preview.html", {"moves": _plan_organize(services)})
 
 
 @router.post("/library/organize", **PAGE)
@@ -430,41 +438,50 @@ def trash_empty(request: Request):
     return RedirectResponse("/library/trash", status_code=303)
 
 
+def _song_view(services, kind: str, ident: str) -> tuple[SimpleNamespace, list[SimpleNamespace]]:
+    if kind not in ("spotify", "video", "song"):
+        raise HTTPException(status_code=404, detail="Not found")
+    if kind == "song":
+        try:
+            song_id = int(ident)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail="Unknown song") from exc
+        song = services.library.get_song(song_id)
+        if song is None:
+            raise HTTPException(status_code=404, detail="Unknown song")
+        jobs: list[Job] = []
+        ident_key = str(song_id)
+    else:
+        song = services.library.get_song_by_identifier(kind, ident)
+        jobs = _matching_jobs(services, kind, ident)
+        if not jobs and song is None:
+            raise HTTPException(status_code=404, detail="Unknown song")
+        ident_key = ident
+    row = _row(services, (kind, ident_key), jobs, song=song)
+    return row, _job_lines(services, jobs)
+
+
 @router.get("/library/spotify/{spotify_id}", **PAGE)
 def spotify_song(request: Request, spotify_id: str):
-    services = get_services(request)
-    song = services.library.get_song_by_identifier("spotify", spotify_id)
-    jobs = _matching_jobs(services, "spotify", spotify_id)
-    if not jobs and song is None:
-        raise HTTPException(status_code=404, detail="Unknown song")
-    row = _row(services, ("spotify", spotify_id), jobs, song=song)
+    row, jobs = _song_view(get_services(request), "spotify", spotify_id)
     return TEMPLATES.TemplateResponse(
-        request, "song.html", {"song": row, "jobs": _job_lines(services, jobs)}
+        request, "song.html", {"song": row, "jobs": jobs}
     )
 
 
 @router.get("/library/video/{video_id}", **PAGE)
 def video_song(request: Request, video_id: str):
-    services = get_services(request)
-    song = services.library.get_song_by_identifier("video", video_id)
-    jobs = _matching_jobs(services, "video", video_id)
-    if not jobs and song is None:
-        raise HTTPException(status_code=404, detail="Unknown song")
-    row = _row(services, ("video", video_id), jobs, song=song)
+    row, jobs = _song_view(get_services(request), "video", video_id)
     return TEMPLATES.TemplateResponse(
-        request, "song.html", {"song": row, "jobs": _job_lines(services, jobs)}
+        request, "song.html", {"song": row, "jobs": jobs}
     )
 
 
 @router.get("/library/song/{song_id:int}", **PAGE)
 def local_song(request: Request, song_id: int):
-    services = get_services(request)
-    song = services.library.get_song(song_id)
-    if song is None:
-        raise HTTPException(status_code=404, detail="Unknown song")
-    row = _row(services, ("song", str(song_id)), [], song=song)
+    row, jobs = _song_view(get_services(request), "song", str(song_id))
     return TEMPLATES.TemplateResponse(
-        request, "song.html", {"song": row, "jobs": []}
+        request, "song.html", {"song": row, "jobs": jobs}
     )
 
 

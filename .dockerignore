@@ -8,3 +8,11 @@ secrets
 docs
 sources
 tests
+node_modules
+e2e
+test-results
+playwright-report
+ui/node_modules
+ui/dist
+ui/auto-imports.d.ts
+ui/components.d.ts

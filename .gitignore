@@ -11,3 +11,12 @@ secrets/
 .DS_Store
 docs/superpowers/
 .worktrees/
+node_modules/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+ui/node_modules/
+ui/auto-imports.d.ts
+ui/components.d.ts
+src/keo/web/ui_dist/

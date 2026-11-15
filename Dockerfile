@@ -1,3 +1,10 @@
+FROM node:22-slim AS ui
+WORKDIR /ui
+COPY ui/package.json ui/package-lock.json* ui/bun.lock* ./
+RUN npm install
+COPY ui/ ./
+RUN npx vite build --outDir /ui_dist
+
 FROM denoland/deno:bin AS deno
 
 FROM python:3.12-slim
@@ -8,6 +15,7 @@ COPY --from=deno /deno /usr/local/bin/deno
 WORKDIR /app
 COPY pyproject.toml ./
 COPY src ./src
+COPY --from=ui /ui_dist ./src/keo/web/ui_dist
 RUN pip install --no-cache-dir .
 ENV KEO_MUSIC_DIR=/music \
     KEO_DATA_DIR=/data \
