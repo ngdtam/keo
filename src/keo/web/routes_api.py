@@ -4,13 +4,16 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
+import json
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
+import ytmusicapi
+from ytmusicapi.exceptions import YTMusicError
 
-from keo.catalog import CatalogError
+from keo.catalog import CatalogError, open_ytmusic
 from keo.history import sync_followed_artists, sync_watched_playlists
 from keo.recycle import list_recycle
 from keo.system import _pkg_version, run_health_checks
@@ -46,6 +49,7 @@ from keo.web.routes_settings import _context, _run_scheduled_task
 
 router = APIRouter()
 API = {"dependencies": [Depends(require_api)]}
+_YTM_AUTH_MAX_BYTES = 1_048_576
 
 
 class LoginRequest(BaseModel):
@@ -103,6 +107,37 @@ def _set_session_cookie(response: Response, token: str, user, *, remember: bool 
     )
 
 
+def _validate_credentials(body: CredentialsRequest) -> tuple[str, str]:
+    username = body.username.strip()
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required")
+    if not body.password.strip():
+        raise HTTPException(status_code=400, detail="Password is required")
+    if body.password != body.password_confirmation:
+        raise HTTPException(status_code=400, detail="Passwords do not match")
+    return username, body.password
+
+
+@router.get("/api/auth/status", tags=["Auth"])
+def api_auth_status(request: Request):
+    services = get_services(request)
+    return {
+        "needs_setup": services.library.needs_setup(),
+        "ytm_configured": services.catalog.is_configured(),
+    }
+
+
+@router.post("/api/auth/setup", tags=["Auth"])
+def api_setup(request: Request, body: CredentialsRequest, response: Response):
+    services = get_services(request)
+    if not services.library.needs_setup():
+        raise HTTPException(status_code=409, detail="Setup is already complete")
+    username, password = _validate_credentials(body)
+    user = services.library.create_initial_user(username, password)
+    _set_session_cookie(response, services.token, user, remember=True)
+    return {"ok": True, "username": user.username, "api_key": user.api_key}
+
+
 @router.post("/api/auth/login", tags=["Auth"])
 def api_login(request: Request, body: LoginRequest, response: Response):
     services = get_services(request)
@@ -128,16 +163,9 @@ def api_logout(response: Response):
 
 @router.post("/api/auth/credentials", **API, tags=["Auth"])
 def api_update_credentials(request: Request, body: CredentialsRequest, response: Response):
-    username = body.username.strip()
-    if not username:
-        raise HTTPException(status_code=400, detail="Username is required")
-    if not body.password.strip():
-        raise HTTPException(status_code=400, detail="Password is required")
-    if body.password != body.password_confirmation:
-        raise HTTPException(status_code=400, detail="Passwords do not match")
-
+    username, password = _validate_credentials(body)
     services = get_services(request)
-    updated = services.library.update_credentials(username, body.password)
+    updated = services.library.update_credentials(username, password)
     _set_session_cookie(response, services.token, updated, remember=True)
     return {"ok": True, "username": updated.username}
 
@@ -394,6 +422,77 @@ def api_settings(request: Request):
     ctx["username"] = user.username
     ctx["api_key"] = user.api_key
     return ctx
+
+
+async def _parse_ytm_auth_json(request: Request) -> str:
+    content_type = request.headers.get("content-type", "").lower()
+    headers_raw = ""
+    auth_file: Any = None
+
+    if "application/json" in content_type:
+        try:
+            payload = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="Invalid JSON body") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="JSON body must be an object")
+        raw_val = payload.get("headers_raw")
+        if raw_val is not None and not isinstance(raw_val, str):
+            raise HTTPException(status_code=400, detail="headers_raw must be a string")
+        headers_raw = raw_val or ""
+    elif "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
+        form = await request.form()
+        raw_val = form.get("headers_raw")
+        headers_raw = raw_val if isinstance(raw_val, str) else ""
+        file_val = form.get("auth_file")
+        auth_file = file_val if hasattr(file_val, "read") else None
+    else:
+        raise HTTPException(status_code=400, detail="Provide headers_raw or auth_file")
+
+    if headers_raw.strip():
+        try:
+            return ytmusicapi.setup(headers_raw=headers_raw)
+        except (YTMusicError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid YouTube Music headers: {exc}") from exc
+
+    if auth_file is not None:
+        raw = await auth_file.read(_YTM_AUTH_MAX_BYTES + 1)
+        if len(raw) > _YTM_AUTH_MAX_BYTES:
+            raise HTTPException(status_code=400, detail="Auth file is too large")
+        if not raw.strip():
+            raise HTTPException(status_code=400, detail="Auth file is empty")
+        try:
+            parsed = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=f"Invalid JSON auth file: {exc}") from exc
+        if not isinstance(parsed, dict) or not parsed:
+            raise HTTPException(status_code=400, detail="Auth file must be a non-empty JSON object")
+        return json.dumps(parsed, indent=2)
+
+    raise HTTPException(status_code=400, detail="Provide headers_raw or auth_file")
+
+
+@router.post("/api/settings/ytm", **API, tags=["Settings"])
+async def api_settings_ytm(request: Request):
+    services = get_services(request)
+    if services.data_dir is None:
+        raise HTTPException(status_code=400, detail="Kéo has no data directory.")
+    auth_json = await _parse_ytm_auth_json(request)
+    dest = services.data_dir / "browser.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    previous = dest.read_bytes() if dest.exists() else None
+    dest.write_text(auth_json, encoding="utf-8")
+    try:
+        ytm = open_ytmusic(dest, services.ytm_client_id, services.ytm_client_secret)
+    except Exception as exc:
+        if previous is None:
+            dest.unlink(missing_ok=True)
+        else:
+            dest.write_bytes(previous)
+        raise HTTPException(status_code=400, detail=f"Invalid YouTube Music auth: {exc}") from exc
+    services.catalog.use(ytm)
+    services.ytm_auth = dest
+    return {"ok": True, "ytm_configured": True}
 
 
 @router.post("/api/settings/tasks/{name}/run", **API, tags=["Settings & Tasks"])

@@ -39,7 +39,10 @@ def ensure_services_auth_user(services: Any, *, reset_password: bool = False) ->
     if not getattr(services, "token", ""):
         if reset_password:
             services.library.reset_auth_password()
-        return services.library.get_auth_user()
+        user = services.library.get_auth_user()
+        if user is not None and user.password_hash and not user.session_secret:
+            user = services.library.ensure_session_secret()
+        return user
     return services.library.ensure_auth_user(
         services.token,
         default_username=os.environ.get("KEO_USERNAME", "admin"),

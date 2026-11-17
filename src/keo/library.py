@@ -1241,6 +1241,34 @@ class Library:
         """Create or update the initial auth user while preserving any existing API key."""
         return self.update_credentials(username, password)
 
+    def ensure_session_secret(self) -> AuthUser | None:
+        """Backfill session_secret for an existing user (e.g. migrated from schema v7)."""
+        with self._lock, self._db:
+            row = self._db.execute(
+                "SELECT username, password_hash, salt, api_key, api_key_rotated, session_secret, updated_at"
+                " FROM auth_user WHERE id = 1"
+            ).fetchone()
+            if row is None:
+                return None
+            user = _row_to_auth_user(row)
+            if user.session_secret:
+                return user
+            session_secret = secrets.token_hex(32)
+            now = _now()
+            self._db.execute(
+                "UPDATE auth_user SET session_secret = ?, updated_at = ? WHERE id = 1",
+                (session_secret, now),
+            )
+        return AuthUser(
+            username=user.username,
+            password_hash=user.password_hash,
+            salt=user.salt,
+            api_key=user.api_key,
+            api_key_rotated=user.api_key_rotated,
+            updated_at=now,
+            session_secret=session_secret,
+        )
+
     def reset_auth_password(self) -> None:
         """Clear password credentials to re-enter setup while preserving API key and rotation state."""
         session_secret = secrets.token_hex(32)

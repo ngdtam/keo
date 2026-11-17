@@ -24,6 +24,7 @@ from keo.web.routes_settings import router as settings_router
 UI_DIST_DIR = Path(__file__).parent / "ui_dist"
 SPA_ROUTES = (
     "/",
+    "/setup",
     "/login",
     "/library",
     "/library/organize/preview",
@@ -96,7 +97,19 @@ def create_app(
             app.mount("/assets", StaticFiles(directory=assets_dir), name="ui-assets")
 
         async def spa_index(request: Request):
-            if request.url.path != "/login" and not is_authorized(request, services):
+            needs_setup = services.library.needs_setup()
+            if needs_setup and request.url.path != "/setup":
+                return RedirectResponse("/setup", status_code=303)
+            if not needs_setup and request.url.path == "/setup":
+                return RedirectResponse(
+                    "/" if is_authorized(request, services) else "/login",
+                    status_code=303,
+                )
+            if (
+                not needs_setup
+                and request.url.path != "/login"
+                and not is_authorized(request, services)
+            ):
                 return RedirectResponse("/login", status_code=303)
             return FileResponse(index_html)
 

@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from types import SimpleNamespace
 
@@ -5,6 +6,8 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
+import keo.web.app as web_app
+from keo.catalog import Catalog
 from keo.library import LATEST_VERSION, Library
 from keo.web import Services, create_app
 from keo.web.auth import (
@@ -177,3 +180,329 @@ def test_token_free_auth_helpers_sessions_and_lockout_reset(
         assert client.get("/api/dashboard").status_code == 401
         client.cookies.clear()
         assert client.get("/api/system/status", headers={"X-Api-Key": rotated_key}).status_code == 200
+
+
+_VALID_RAW_HEADERS = (
+    "cookie: __Secure-3PAPISID=x; SAPISID=x; SID=y\n"
+    "x-goog-authuser: 0\n"
+    "authorization: SAPISIDHASH 0_deadbeef\n"
+)
+
+
+def test_first_run_setup_api_and_ytm_hot_reload(library, worker, spotdl, cookies, tmp_path):
+    data_dir = tmp_path / "data"
+    music_dir = tmp_path / "music"
+    music_dir.mkdir()
+    services = Services(
+        token="",
+        catalog=Catalog(None),
+        library=library,
+        worker=worker,
+        spotdl=spotdl,
+        cookies=cookies,
+        run_later=lambda fn: fn(),
+        data_dir=data_dir,
+        music_dir=music_dir,
+    )
+
+    with TestClient(create_app(services)) as client:
+        # 1. Initial status: needs setup, ytm not configured
+        status = client.get("/api/auth/status")
+        assert status.status_code == 200
+        assert status.json() == {"needs_setup": True, "ytm_configured": False}
+
+        # 2. Setup validation errors (blank username, blank password, mismatching password)
+        assert (
+            client.post(
+                "/api/auth/setup",
+                json={"username": "  ", "password": "secret", "password_confirmation": "secret"},
+            ).status_code
+            == 400
+        )
+        assert (
+            client.post(
+                "/api/auth/setup",
+                json={"username": "tam", "password": "   ", "password_confirmation": "   "},
+            ).status_code
+            == 400
+        )
+        mismatch = client.post(
+            "/api/auth/setup",
+            json={"username": "tam", "password": "secret", "password_confirmation": "other"},
+        )
+        assert mismatch.status_code == 400
+
+        # Valid setup succeeds, sets keo_session cookie, returns api_key
+        setup_res = client.post(
+            "/api/auth/setup",
+            json={"username": "  Tam ", "password": "secret", "password_confirmation": "secret"},
+        )
+        assert setup_res.status_code == 200
+        body = setup_res.json()
+        assert body["ok"] is True
+        assert body["username"] == "tam"
+        assert len(body["api_key"]) == 32
+        assert client.cookies.get(COOKIE_NAME)
+        assert client.get("/api/dashboard").status_code == 200
+
+        # 3. Second setup attempt returns 409 Conflict
+        second = client.post(
+            "/api/auth/setup",
+            json={"username": "other", "password": "secret", "password_confirmation": "secret"},
+        )
+        assert second.status_code == 409
+        assert "already complete" in second.json()["detail"].lower()
+
+        # 4. Logout + login works with token=""
+        client.post("/api/auth/logout")
+        assert client.get("/api/dashboard").status_code == 401
+        login_res = client.post(
+            "/api/auth/login",
+            json={"username": "tam", "password": "secret", "remember": True},
+        )
+        assert login_res.status_code == 200
+        assert login_res.json() == {"ok": True, "username": "tam"}
+        assert client.get("/api/dashboard").status_code == 200
+
+        # 5. YTM setup: unauthenticated rejected; incomplete headers rejected; empty payload rejected
+        unauth_ytm = TestClient(client.app).post(
+            "/api/settings/ytm", json={"headers_raw": _VALID_RAW_HEADERS}
+        )
+        assert unauth_ytm.status_code == 401
+
+        assert client.post("/api/settings/ytm", json={"headers_raw": ""}).status_code == 400
+        assert (
+            client.post("/api/settings/ytm", json={"headers_raw": "cookie: SID=y\n"}).status_code
+            == 400
+        )
+        # Missing authorization / __Secure-3PAPISID fails open_ytmusic -> 400, catalog stays unconfigured
+        assert (
+            client.post(
+                "/api/settings/ytm",
+                json={"headers_raw": "cookie: SAPISID=x; SID=y\nx-goog-authuser: 0\n"},
+            ).status_code
+            == 400
+        )
+        assert services.catalog.is_configured() is False
+        assert not (data_dir / "browser.json").exists()
+
+        # Invalid JSON file upload rejected; valid JSON object missing auth fields rejected
+        assert (
+            client.post(
+                "/api/settings/ytm",
+                files={"auth_file": ("browser.json", b"not-json", "application/json")},
+            ).status_code
+            == 400
+        )
+        assert (
+            client.post(
+                "/api/settings/ytm",
+                files={"auth_file": ("browser.json", b'["not","a","dict"]', "application/json")},
+            ).status_code
+            == 400
+        )
+        assert (
+            client.post(
+                "/api/settings/ytm",
+                files={"auth_file": ("browser.json", b'{"foo":"bar"}', "application/json")},
+            ).status_code
+            == 400
+        )
+
+        # Valid raw headers (JSON) configures catalog and writes data_dir/browser.json
+        ytm_ok = client.post("/api/settings/ytm", json={"headers_raw": _VALID_RAW_HEADERS})
+        assert ytm_ok.status_code == 200
+        assert ytm_ok.json() == {"ok": True, "ytm_configured": True}
+        assert (data_dir / "browser.json").is_file()
+        assert services.ytm_auth == data_dir / "browser.json"
+        assert services.catalog.is_configured() is True
+
+        # Status now shows setup complete & ytm configured
+        status_after = client.get("/api/auth/status")
+        assert status_after.status_code == 200
+        assert status_after.json() == {"needs_setup": False, "ytm_configured": True}
+
+        # Bad upload after valid setup preserves existing browser.json & configured catalog
+        prev_bytes = (data_dir / "browser.json").read_bytes()
+        bad_after = client.post(
+            "/api/settings/ytm",
+            files={"auth_file": ("browser.json", b'{"foo":"bar"}', "application/json")},
+        )
+        assert bad_after.status_code == 400
+        assert (data_dir / "browser.json").read_bytes() == prev_bytes
+        assert services.catalog.is_configured() is True
+
+        # Valid browser.json file upload also works
+        valid_browser_json = json.dumps(
+            {
+                "cookie": "__Secure-3PAPISID=uploaded; SID=y",
+                "x-goog-authuser": "0",
+                "authorization": "SAPISIDHASH 1_uploaded",
+            }
+        ).encode("utf-8")
+        upload_ok = client.post(
+            "/api/settings/ytm",
+            files={"auth_file": ("browser.json", valid_browser_json, "application/json")},
+        )
+        assert upload_ok.status_code == 200
+        assert upload_ok.json() == {"ok": True, "ytm_configured": True}
+        assert json.loads((data_dir / "browser.json").read_text("utf-8"))["cookie"] == (
+            "__Secure-3PAPISID=uploaded; SID=y"
+        )
+
+        # Valid multipart headers_raw form field also works
+        form_ok = client.post(
+            "/api/settings/ytm",
+            data={"headers_raw": _VALID_RAW_HEADERS},
+        )
+        assert form_ok.status_code == 200
+        assert form_ok.json() == {"ok": True, "ytm_configured": True}
+
+        # Oversized auth_file is rejected with 400
+        oversized = client.post(
+            "/api/settings/ytm",
+            files={"auth_file": ("browser.json", b"x" * (1_048_576 + 1), "application/json")},
+        )
+        assert oversized.status_code == 400
+
+        # API key returned by /api/auth/setup works on /api/settings/ytm without cookies
+        api_client = TestClient(client.app)
+        assert (
+            api_client.post(
+                "/api/settings/ytm",
+                json={"headers_raw": _VALID_RAW_HEADERS},
+                headers={"X-Api-Key": body["api_key"]},
+            ).status_code
+            == 200
+        )
+
+        # Missing data_dir returns 400
+        services.data_dir = None
+        assert client.post("/api/settings/ytm", json={"headers_raw": _VALID_RAW_HEADERS}).status_code == 400
+
+
+def test_setup_spa_redirects(library, worker, spotdl, cookies, tmp_path, monkeypatch):
+    ui_dir = tmp_path / "ui"
+    ui_dir.mkdir()
+    (ui_dir / "index.html").write_text('<!doctype html><html><body><div id="app"></div></body></html>')
+    monkeypatch.setattr(web_app, "UI_DIST_DIR", ui_dir)
+
+    music_dir = tmp_path / "music"
+    music_dir.mkdir()
+    services = Services(
+        token="",
+        catalog=Catalog(None),
+        library=library,
+        worker=worker,
+        spotdl=spotdl,
+        cookies=cookies,
+        run_later=lambda fn: fn(),
+        data_dir=tmp_path / "data",
+        music_dir=music_dir,
+    )
+
+    with TestClient(create_app(services, serve_ui=True)) as spa:
+        # While needs_setup=True: /setup serves 200, / and /login redirect to /setup
+        setup_page = spa.get("/setup")
+        assert setup_page.status_code == 200
+        assert '<div id="app"></div>' in setup_page.text
+
+        root_redirect = spa.get("/", follow_redirects=False)
+        assert root_redirect.status_code == 303
+        assert root_redirect.headers["location"] == "/setup"
+
+        login_redirect = spa.get("/login", follow_redirects=False)
+        assert login_redirect.status_code == 303
+        assert login_redirect.headers["location"] == "/setup"
+
+        # Complete setup (sets keo_session cookie on spa client)
+        assert (
+            spa.post(
+                "/api/auth/setup",
+                json={"username": "tam", "password": "secret", "password_confirmation": "secret"},
+            ).status_code
+            == 200
+        )
+
+        # Authenticated after setup: /setup redirects to /, / serves 200
+        setup_authed = spa.get("/setup", follow_redirects=False)
+        assert setup_authed.status_code == 303
+        assert setup_authed.headers["location"] == "/"
+        assert spa.get("/").status_code == 200
+
+        # Unauthenticated after setup: /setup and / redirect to /login, /login serves 200
+        spa.cookies.clear()
+        setup_unauth = spa.get("/setup", follow_redirects=False)
+        assert setup_unauth.status_code == 303
+        assert setup_unauth.headers["location"] == "/login"
+
+        root_unauth = spa.get("/", follow_redirects=False)
+        assert root_unauth.status_code == 303
+        assert root_unauth.headers["location"] == "/login"
+
+        assert spa.get("/login").status_code == 200
+
+
+def test_v7_migrated_user_login_without_token_backfills_session_secret(
+    catalog, worker, spotdl, cookies, tmp_path
+):
+    from keo.library import hash_password
+
+    db_path = tmp_path / "v7.db"
+    salt = "00112233445566778899aabbccddeeff"
+    pw_hash = hash_password("legacy-pass", salt)
+    con = sqlite3.connect(db_path)
+    con.executescript(
+        f"""
+        CREATE TABLE songs (
+            id INTEGER PRIMARY KEY, video_id TEXT UNIQUE, artist_key TEXT NOT NULL,
+            title_key TEXT NOT NULL, spotify_id TEXT UNIQUE, artist TEXT NOT NULL,
+            title TEXT NOT NULL, audio_path TEXT, audio_mtime REAL, audio_size INTEGER,
+            audio_card TEXT, audio_details TEXT, has_cover INTEGER,
+            UNIQUE (artist_key, title_key)
+        );
+        CREATE TABLE auth_user (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            username TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            salt TEXT NOT NULL,
+            api_key TEXT NOT NULL,
+            api_key_rotated INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL
+        );
+        INSERT INTO auth_user (id, username, password_hash, salt, api_key, api_key_rotated, updated_at)
+        VALUES (1, 'admin', '{pw_hash}', '{salt}', '0123456789abcdef0123456789abcdef', 0, '2026-01-01T00:00:00+00:00');
+        PRAGMA user_version = 7;
+        """
+    )
+    con.close()
+
+    lib = Library(db_path, tmp_path / "archive.txt")
+    migrated = lib.get_auth_user()
+    assert migrated is not None
+    assert migrated.session_secret == ""
+
+    music_dir = tmp_path / "music"
+    music_dir.mkdir()
+    services = Services(
+        token="",
+        catalog=catalog,
+        library=lib,
+        worker=worker,
+        spotdl=spotdl,
+        cookies=cookies,
+        run_later=lambda fn: fn(),
+        data_dir=tmp_path / "data",
+        music_dir=music_dir,
+    )
+    with TestClient(create_app(services)) as client:
+        login_res = client.post(
+            "/api/auth/login",
+            json={"username": "admin", "password": "legacy-pass"},
+        )
+        assert login_res.status_code == 200
+        assert client.cookies.get(COOKIE_NAME)
+        assert client.get("/api/dashboard").status_code == 200
+        refreshed = lib.get_auth_user()
+        assert refreshed is not None
+        assert len(refreshed.session_secret) == 64
