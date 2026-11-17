@@ -6,8 +6,11 @@ because the web threads, the worker, and the scheduler share one connection.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import re
+import secrets
 import sqlite3
 import threading
 from dataclasses import dataclass
@@ -142,6 +145,15 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
     interval_hours INTEGER NOT NULL,
     last_run TEXT
 );
+CREATE TABLE IF NOT EXISTS auth_user (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    username TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    salt TEXT NOT NULL,
+    api_key TEXT NOT NULL,
+    api_key_rotated INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -241,6 +253,26 @@ class ScheduledTask:
     last_run: str | None
 
 
+@dataclass(frozen=True)
+class AuthUser:
+    username: str
+    password_hash: str
+    salt: str
+    api_key: str
+    api_key_rotated: bool
+    updated_at: str
+
+
+def hash_password(password: str, salt_hex: str) -> str:
+    return hashlib.pbkdf2_hmac(
+        "sha512",
+        password.encode("utf-8"),
+        bytes.fromhex(salt_hex),
+        100_000,
+        dklen=32,
+    ).hex()
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -275,7 +307,7 @@ def _artist_in_filename(artist: str, audio_path: str) -> bool:
     return bool(artist_norm) and (artist_norm in filename_norm or f" {artist_norm} " in f" {filename_norm} ")
 
 
-LATEST_VERSION = 6
+LATEST_VERSION = 7
 
 
 def _row_to_song(row: sqlite3.Row) -> Song:
@@ -301,6 +333,17 @@ def _row_to_song(row: sqlite3.Row) -> Song:
         audio_card=row["audio_card"],
         audio_details=details,
         has_cover=None if raw_cover is None else bool(raw_cover),
+    )
+
+
+def _row_to_auth_user(row: sqlite3.Row) -> AuthUser:
+    return AuthUser(
+        username=row["username"],
+        password_hash=row["password_hash"],
+        salt=row["salt"],
+        api_key=row["api_key"],
+        api_key_rotated=bool(row["api_key_rotated"]),
+        updated_at=row["updated_at"],
     )
 
 
@@ -365,6 +408,22 @@ class Library:
         if version < 6:
             with self._db:
                 self._db.execute("PRAGMA user_version = 6")
+        if version < 7:
+            with self._db:
+                self._db.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS auth_user (
+                        id INTEGER PRIMARY KEY CHECK (id = 1),
+                        username TEXT NOT NULL,
+                        password_hash TEXT NOT NULL,
+                        salt TEXT NOT NULL,
+                        api_key TEXT NOT NULL,
+                        api_key_rotated INTEGER NOT NULL DEFAULT 0,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                self._db.execute("PRAGMA user_version = 7")
 
     def _accept_close_match_review(self) -> None:
         row = self._db.execute(
@@ -1078,6 +1137,132 @@ class Library:
             rows.get(name, ScheduledTask(name, hours, None))
             for name, hours in defaults
         ]
+
+    # Auth user
+
+    def get_auth_user(self) -> AuthUser | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT username, password_hash, salt, api_key, api_key_rotated, updated_at"
+                " FROM auth_user WHERE id = 1"
+            ).fetchone()
+        return _row_to_auth_user(row) if row is not None else None
+
+    def ensure_auth_user(
+        self,
+        default_password: str,
+        default_username: str = "admin",
+        default_api_key: str = "",
+        reset_password: bool = False,
+    ) -> AuthUser:
+        norm_username = default_username.strip().lower() or "admin"
+        with self._lock, self._db:
+            row = self._db.execute(
+                "SELECT username, password_hash, salt, api_key, api_key_rotated, updated_at"
+                " FROM auth_user WHERE id = 1"
+            ).fetchone()
+            if row is None:
+                salt = secrets.token_hex(16)
+                pw_hash = hash_password(default_password, salt)
+                api_key = default_api_key or secrets.token_hex(16)
+                now = _now()
+                self._db.execute(
+                    "INSERT INTO auth_user"
+                    " (id, username, password_hash, salt, api_key, api_key_rotated, updated_at)"
+                    " VALUES (1, ?, ?, ?, ?, 0, ?)",
+                    (norm_username, pw_hash, salt, api_key, now),
+                )
+                return AuthUser(
+                    username=norm_username,
+                    password_hash=pw_hash,
+                    salt=salt,
+                    api_key=api_key,
+                    api_key_rotated=False,
+                    updated_at=now,
+                )
+            if reset_password:
+                salt = secrets.token_hex(16)
+                pw_hash = hash_password(default_password, salt)
+                now = _now()
+                self._db.execute(
+                    "UPDATE auth_user SET username = ?, password_hash = ?, salt = ?, updated_at = ?"
+                    " WHERE id = 1",
+                    (norm_username, pw_hash, salt, now),
+                )
+                return AuthUser(
+                    username=norm_username,
+                    password_hash=pw_hash,
+                    salt=salt,
+                    api_key=row["api_key"],
+                    api_key_rotated=bool(row["api_key_rotated"]),
+                    updated_at=now,
+                )
+            return _row_to_auth_user(row)
+
+    def verify_user(self, username: str, password: str) -> AuthUser | None:
+        norm_username = username.strip().lower()
+        if not norm_username or not password:
+            return None
+        user = self.get_auth_user()
+        if user is None:
+            return None
+        if not hmac.compare_digest(norm_username.encode("utf-8"), user.username.encode("utf-8")):
+            return None
+        candidate = hash_password(password, user.salt)
+        if not hmac.compare_digest(candidate.encode("utf-8"), user.password_hash.encode("utf-8")):
+            return None
+        return user
+
+    def update_credentials(self, username: str, password: str) -> AuthUser:
+        norm_username = username.strip().lower()
+        if not norm_username:
+            raise ValueError("Username must not be empty")
+        if not password:
+            raise ValueError("Password must not be empty")
+        salt = secrets.token_hex(16)
+        pw_hash = hash_password(password, salt)
+        now = _now()
+        with self._lock, self._db:
+            row = self._db.execute(
+                "SELECT api_key, api_key_rotated FROM auth_user WHERE id = 1"
+            ).fetchone()
+            if row is None:
+                api_key = secrets.token_hex(16)
+                rotated = False
+                self._db.execute(
+                    "INSERT INTO auth_user"
+                    " (id, username, password_hash, salt, api_key, api_key_rotated, updated_at)"
+                    " VALUES (1, ?, ?, ?, ?, 0, ?)",
+                    (norm_username, pw_hash, salt, api_key, now),
+                )
+            else:
+                api_key = row["api_key"]
+                rotated = bool(row["api_key_rotated"])
+                self._db.execute(
+                    "UPDATE auth_user SET username = ?, password_hash = ?, salt = ?, updated_at = ?"
+                    " WHERE id = 1",
+                    (norm_username, pw_hash, salt, now),
+                )
+        return AuthUser(
+            username=norm_username,
+            password_hash=pw_hash,
+            salt=salt,
+            api_key=api_key,
+            api_key_rotated=rotated,
+            updated_at=now,
+        )
+
+    def reset_api_key(self) -> str:
+        new_key = secrets.token_hex(16)
+        now = _now()
+        with self._lock, self._db:
+            cur = self._db.execute(
+                "UPDATE auth_user SET api_key = ?, api_key_rotated = 1, updated_at = ? WHERE id = 1",
+                (new_key, now),
+            )
+            if cur.rowcount == 0:
+                raise RuntimeError("auth_user is not initialized")
+        return new_key
 
     # Helpers that expect the lock to be held
 

@@ -133,6 +133,14 @@ def run_health_checks(services) -> list[tuple[str, str]]:
     cookie_level = "warn" if "expired" in cookie_msg.lower() or "failed" in cookie_msg.lower() else "ok"
     checks.append((cookie_level, f"Cookie: {cookie_msg}"))
 
+    if getattr(services, "library", None) is not None and getattr(services, "token", None):
+        user = services.library.ensure_auth_user(
+            services.token,
+            default_username=os.environ.get("KEO_USERNAME", "admin"),
+        )
+        if len(user.api_key) < 20:
+            checks.append(("warn", "API key: shorter than 20 characters"))
+
     if services.music_dir is None:
         checks.append(("warn", "Music folder: not configured"))
     elif not services.music_dir.is_dir():
