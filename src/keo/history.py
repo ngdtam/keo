@@ -315,12 +315,12 @@ class Scheduler:
             self._last_housekeep = now.date()
             self._library.housekeep()
             self._library.record_task_run("housekeeping", 24)
-        if now.hour >= self._hour and self._last_playlist_sync != now.date():
+        if self._catalog.is_configured() and now.hour >= self._hour and self._last_playlist_sync != now.date():
             self._last_playlist_sync = now.date()
             sync_watched_playlists(
                 catalog=self._catalog, library=self._library, worker=self._worker, now=now
             )
-        if now.hour >= self._hour and self._last_artist_sync != now.date():
+        if self._catalog.is_configured() and now.hour >= self._hour and self._last_artist_sync != now.date():
             self._last_artist_sync = now.date()
             sync_followed_artists(catalog=self._catalog, library=self._library, now=now)
         if self._data_dir is not None and now.hour >= self._hour and self._last_backup != now.date():
@@ -329,6 +329,8 @@ class Scheduler:
             if last is None or (now.date() - last).days >= 7:
                 backup_data(self._data_dir, self._config_path, today=now.date())
                 self._library.record_task_run("backup", 168)
+        if not self._catalog.is_configured():
+            return False
         if not is_due(now, self._hour, self._library, self._last_attempt):
             return False
         self._last_attempt = now.date()

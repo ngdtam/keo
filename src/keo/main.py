@@ -53,10 +53,12 @@ def build_app() -> FastAPI:
         library, spotdl, settings.music_dir, cookies=cookies,
         on_success=_on_success, on_failure=_on_failure,
     )
-    try:
-        ytm = open_ytmusic(settings.ytm_auth, settings.ytm_client_id, settings.ytm_client_secret)
-    except Exception as exc:
-        sys.exit(f"Kéo cannot start: KEO_YTM_AUTH could not be loaded: {exc}")
+    ytm = None
+    if settings.ytm_auth is not None:
+        try:
+            ytm = open_ytmusic(settings.ytm_auth, settings.ytm_client_id, settings.ytm_client_secret)
+        except Exception as exc:
+            sys.exit(f"Kéo cannot start: KEO_YTM_AUTH could not be loaded: {exc}")
     services = Services(
         token=settings.token,
         catalog=Catalog(ytm),

@@ -27,11 +27,15 @@ def candidate(name="Lạc Trôi", artist="Sơn Tùng M-TP", song_id="sp1"):
 
 
 class FakeCatalog:
-    def __init__(self):
+    def __init__(self, configured=True):
         self.songs = [SONG]
         self.history_items = []
         self.radio_calls = []
         self.fail = False
+        self.configured = configured
+
+    def is_configured(self):
+        return self.configured
 
     def _check(self):
         if self.fail:

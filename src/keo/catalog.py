@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, TypeVar
@@ -30,6 +31,9 @@ MOOD_SECTION_PATHS = (
 )
 
 
+_UNCONFIGURED_MSG = "YouTube Music is not configured yet. Set it up in Setup or Settings."
+
+
 class CatalogError(Exception):
     """YouTube Music failed or rejected the request."""
 
@@ -43,17 +47,36 @@ def open_ytmusic(auth_path: Path, client_id: str, client_secret: str) -> YTMusic
 
 
 class Catalog:
-    def __init__(self, ytm: Any) -> None:
+    def __init__(self, ytm: Any = None) -> None:
+        self._lock = threading.Lock()
         self._ytm = ytm
 
+    def is_configured(self) -> bool:
+        with self._lock:
+            return self._ytm is not None
+
+    def use(self, ytm: Any) -> None:
+        with self._lock:
+            self._ytm = ytm
+
+    def _require_ytm(self) -> Any:
+        with self._lock:
+            ytm = self._ytm
+        if ytm is None:
+            raise CatalogError(_UNCONFIGURED_MSG)
+        return ytm
+
     def search(self, query: str) -> list[SongRow]:
-        return _songs(self._call(self._ytm.search, query, filter="songs", limit=20))
+        ytm = self._require_ytm()
+        return _songs(self._call(ytm.search, query, filter="songs", limit=20))
 
     def suggestions(self, query: str) -> list[str]:
-        return list(self._call(self._ytm.get_search_suggestions, query))
+        ytm = self._require_ytm()
+        return list(self._call(ytm.get_search_suggestions, query))
 
     def charts(self) -> list[PlaylistRef]:
-        data = self._call(self._ytm.get_charts, "VN")
+        ytm = self._require_ytm()
+        data = self._call(ytm.get_charts, "VN")
         return [
             PlaylistRef(item["playlistId"], item.get("title") or "")
             for key in CHART_CAROUSELS
@@ -62,36 +85,40 @@ class Catalog:
         ]
 
     def moods(self) -> dict[str, list[MoodRef]]:
-        data = self._call(self._ytm.get_mood_categories)
+        ytm = self._require_ytm()
+        data = self._call(ytm.get_mood_categories)
         return {
             section: [MoodRef(item["params"], item["title"]) for item in items]
             for section, items in data.items()
         }
 
     def mood_playlists(self, params: str) -> list[PlaylistRef]:
+        ytm = self._require_ytm()
         # ytmusicapi.get_mood_playlists crashes on genre pages that include Songs or Music videos.
-        if isinstance(self._ytm, YTMusic):
+        if isinstance(ytm, YTMusic):
             data = self._call(
-                self._ytm._send_request,
+                ytm._send_request,
                 "browse",
                 {"browseId": "FEmusic_moods_and_genres_category", "params": params},
             )
             return _mood_playlists_from_browse(data)
         return [
             PlaylistRef(item["playlistId"], item.get("title") or "")
-            for item in self._call(self._ytm.get_mood_playlists, params)
+            for item in self._call(ytm.get_mood_playlists, params)
             if item.get("playlistId")
         ]
 
     def playlist(self, playlist_id: str) -> tuple[str, list[SongRow]]:
+        ytm = self._require_ytm()
         if playlist_id in {"LM", "liked"}:
-            data = self._call(self._ytm.get_liked_songs, limit=100)
+            data = self._call(ytm.get_liked_songs, limit=100)
             return data.get("title") or "Liked Music", _songs(data.get("tracks") or [])
-        data = self._call(self._ytm.get_playlist, playlist_id, limit=100)
+        data = self._call(ytm.get_playlist, playlist_id, limit=100)
         return data.get("title") or "", _songs(data.get("tracks") or [])
 
     def find_artist(self, query: str) -> tuple[str, str] | None:
-        results = self._call(self._ytm.search, query, filter="artists", limit=1)
+        ytm = self._require_ytm()
+        results = self._call(ytm.search, query, filter="artists", limit=1)
         for item in results:
             cid = item.get("browseId")
             name = item.get("artist") or ""
@@ -100,7 +127,8 @@ class Catalog:
         return None
 
     def artist_releases(self, channel_id: str) -> tuple[str, list[SongRow]]:
-        data = self._call(self._ytm.get_artist, channel_id)
+        ytm = self._require_ytm()
+        data = self._call(ytm.get_artist, channel_id)
         name = data.get("name") or ""
         seen: set[str] = set()
         songs: list[SongRow] = []
@@ -123,17 +151,19 @@ class Catalog:
             bid = rel.get("browseId")
             if not bid:
                 continue
-            album = self._call(self._ytm.get_album, bid)
+            album = self._call(ytm.get_album, bid)
             _add(_songs(album.get("tracks") or []))
         return name, songs
 
     def radio(self, video_id: str) -> list[SongRow]:
-        data = self._call(self._ytm.get_watch_playlist, videoId=video_id, limit=25)
+        ytm = self._require_ytm()
+        data = self._call(ytm.get_watch_playlist, videoId=video_id, limit=25)
         return _songs(data.get("tracks") or [])
 
     def history(self) -> list[HistoryItem]:
+        ytm = self._require_ytm()
         items = []
-        for item in self._call(self._ytm.get_history):
+        for item in self._call(ytm.get_history):
             song = _song(item)
             if song is not None:
                 items.append(
@@ -142,6 +172,7 @@ class Catalog:
         return items
 
     def _call(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        self._require_ytm()
         try:
             return fn(*args, **kwargs)
         except Exception as exc:

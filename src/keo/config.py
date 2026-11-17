@@ -70,7 +70,7 @@ class Settings:
     token: str
     music_dir: Path
     data_dir: Path
-    ytm_auth: Path
+    ytm_auth: Path | None
     ytm_client_id: str
     ytm_client_secret: str
     spotdl: SpotdlSettings
@@ -95,16 +95,22 @@ _ALLOWED = {
 
 
 def load_settings(env: Mapping[str, str]) -> Settings:
-    token = _require(env, "KEO_TOKEN")
+    token = env.get("KEO_TOKEN", "").strip()
     music_dir = Path(_require(env, "KEO_MUSIC_DIR"))
     if not music_dir.is_dir():
         raise ConfigError(f"KEO_MUSIC_DIR is not a folder: {music_dir}")
-    ytm_auth = Path(_require(env, "KEO_YTM_AUTH"))
-    if not ytm_auth.is_file():
-        raise ConfigError(f"KEO_YTM_AUTH file not found: {ytm_auth}")
+    data_dir = Path(env.get("KEO_DATA_DIR", "/data"))
+    saved_auth = data_dir / "browser.json"
+    ytm_auth_raw = env.get("KEO_YTM_AUTH", "").strip()
+    if saved_auth.is_file():
+        ytm_auth: Path | None = saved_auth
+    elif ytm_auth_raw and Path(ytm_auth_raw).is_file():
+        ytm_auth = Path(ytm_auth_raw)
+    else:
+        ytm_auth = None
     client_id = env.get("KEO_YTM_CLIENT_ID", "").strip()
     client_secret = env.get("KEO_YTM_CLIENT_SECRET", "").strip()
-    if _is_oauth(ytm_auth) and not (client_id and client_secret):
+    if ytm_auth is not None and _is_oauth(ytm_auth) and not (client_id and client_secret):
         raise ConfigError(
             "KEO_YTM_AUTH is an OAuth file, so KEO_YTM_CLIENT_ID and "
             "KEO_YTM_CLIENT_SECRET are required"
@@ -114,7 +120,7 @@ def load_settings(env: Mapping[str, str]) -> Settings:
     return Settings(
         token=token,
         music_dir=music_dir,
-        data_dir=Path(env.get("KEO_DATA_DIR", "/data")),
+        data_dir=data_dir,
         ytm_auth=ytm_auth,
         ytm_client_id=client_id,
         ytm_client_secret=client_secret,

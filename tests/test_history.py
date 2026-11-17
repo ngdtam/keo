@@ -322,3 +322,25 @@ def test_sync_followed_artists_adds_new_releases_to_review(catalog, library):
     assert library.get_review("vid_release") is not None
     assert library.get_review("vid_owned") is None
     assert library.get_review("vid_dismissed") is None
+
+
+def test_scheduler_skips_ytm_syncs_when_catalog_unconfigured(library, worker, spotdl):
+    from keo.catalog import Catalog
+
+    catalog = Catalog(None)
+    library.watch_playlist("PL_review", "Review List", auto_queue=False)
+    library.follow_artist("UC3muIvzjhubNpJ4Pn_0kCQw", "Sơn Tùng M-TP")
+    scheduler = Scheduler(
+        catalog=catalog,
+        library=library,
+        worker=worker,
+        spotdl=spotdl,
+        cookies=worker.cookies,
+        timezone="Asia/Ho_Chi_Minh",
+        hour=23,
+        clock=lambda: NIGHT,
+    )
+    assert scheduler.tick() is False
+    assert library.last_pull() is None
+    assert library.list_watched_playlists()[0].last_synced_at is None
+    assert library.list_followed_artists()[0].last_synced_at is None

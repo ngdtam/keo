@@ -160,3 +160,28 @@ def test_mood_playlists_from_browse_skips_non_playlist_sections():
         PlaylistRef("RDCLAK123", "Hotlist"),
         PlaylistRef("PL456", "Grid Mix"),
     ]
+
+
+def test_unconfigured_catalog_raises_and_hot_reloads_with_use(ytm):
+    catalog = Catalog(None)
+    assert catalog.is_configured() is False
+
+    calls = [
+        lambda: catalog.search("lac troi"),
+        lambda: catalog.suggestions("lac"),
+        lambda: catalog.charts(),
+        lambda: catalog.moods(),
+        lambda: catalog.mood_playlists("ggMchill"),
+        lambda: catalog.playlist("PLdaily"),
+        lambda: catalog.find_artist("Son Tung"),
+        lambda: catalog.artist_releases("UC1"),
+        lambda: catalog.radio("vid1"),
+        lambda: catalog.history(),
+    ]
+    for fn in calls:
+        with pytest.raises(CatalogError, match="YouTube Music is not configured yet"):
+            fn()
+
+    catalog.use(ytm)
+    assert catalog.is_configured() is True
+    assert catalog.search("lac troi") == [SONG]

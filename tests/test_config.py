@@ -53,11 +53,16 @@ def test_premium_settings_load(env, tmp_path):
     assert (spotdl.cookie_file, spotdl.format, spotdl.bitrate) == (str(cookies), "opus", "disable")
 
 
-@pytest.mark.parametrize("name", ["KEO_TOKEN", "KEO_MUSIC_DIR", "KEO_YTM_AUTH"])
+@pytest.mark.parametrize("name", ["KEO_MUSIC_DIR"])
 def test_missing_required_variable_is_named(env, name):
     del env[name]
     with pytest.raises(ConfigError, match=name):
         load_settings(env)
+
+
+def test_missing_token_defaults_to_empty(env):
+    del env["KEO_TOKEN"]
+    assert load_settings(env).token == ""
 
 
 def test_music_dir_must_exist(env, tmp_path):
@@ -68,8 +73,20 @@ def test_music_dir_must_exist(env, tmp_path):
 
 def test_ytm_auth_file_must_exist(env, tmp_path):
     env["KEO_YTM_AUTH"] = str(tmp_path / "missing.json")
+    assert load_settings(env).ytm_auth is None
+    bad = tmp_path / "bad.json"
+    bad.write_text("{", encoding="utf-8")
+    env["KEO_YTM_AUTH"] = str(bad)
     with pytest.raises(ConfigError, match="KEO_YTM_AUTH"):
         load_settings(env)
+
+
+def test_data_dir_browser_json_takes_precedence_over_ytm_auth(env, tmp_path):
+    data_dir = Path(env["KEO_DATA_DIR"])
+    data_dir.mkdir(parents=True, exist_ok=True)
+    saved = data_dir / "browser.json"
+    saved.write_text(json.dumps({"cookie": "SID=saved"}), encoding="utf-8")
+    assert load_settings(env).ytm_auth == saved
 
 
 def test_oauth_file_needs_client_credentials(env):
