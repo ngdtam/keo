@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import RedirectResponse, Response
 
 from keo.audio_info import cover_bytes, load
 from keo.library import Job, Song, inside_music, unique_title_file
@@ -143,11 +143,9 @@ def _matching_jobs(services, kind: str, ident: str) -> list[Job]:
     ]
 
 
-@router.get("/library/{kind}/{ident}/cover", **PAGE)
-def song_cover(request: Request, kind: str, ident: str):
+def _song_cover_response(services, kind: str, ident: str) -> Response:
     if kind not in ("spotify", "video", "song"):
         raise HTTPException(status_code=404, detail="Not found")
-    services = get_services(request)
     song = services.library.get_song_by_identifier(kind, ident)
     jobs = _matching_jobs(services, kind, ident)
     if not jobs and song is None:
@@ -158,6 +156,11 @@ def song_cover(request: Request, kind: str, ident: str):
         raise HTTPException(status_code=404, detail="No cover")
     data, mime = found
     return Response(content=data, media_type=mime)
+
+
+@router.get("/library/{kind}/{ident}/cover", **PAGE)
+def song_cover(request: Request, kind: str, ident: str):
+    return _song_cover_response(get_services(request), kind, ident)
 
 
 def _target_kbps(bitrate: str) -> int:
@@ -261,11 +264,15 @@ def _library_page_data(services, filter: str = "all", q: str = "", sort: str = "
     }
 
 
-@router.post("/library/rescan", **PAGE)
-def rescan_library(request: Request):
-    services = get_services(request)
+def _rescan_library(services) -> int:
     if services.music_dir is not None:
         scan(services.music_dir, services.library)
+    return len(_collect_rows(services))
+
+
+@router.post("/library/rescan", **PAGE)
+def rescan_library(request: Request):
+    _rescan_library(get_services(request))
     return RedirectResponse("/library", status_code=303)
 
 
@@ -290,27 +297,27 @@ def _plan_organize(services) -> list[dict]:
     return moves
 
 
+def _organize_library(services) -> int:
+    if services.music_dir is None:
+        return 0
+    settings = services.spotdl.settings
+    return organize_library(
+        services.music_dir,
+        services.library,
+        settings.output_template,
+        max_length=settings.max_filename_length,
+    )
+
+
 @router.post("/library/organize", **PAGE)
 def organize_library_route(request: Request):
-    services = get_services(request)
-    if services.music_dir is not None:
-        settings = services.spotdl.settings
-        organize_library(
-            services.music_dir,
-            services.library,
-            settings.output_template,
-            max_length=settings.max_filename_length,
-        )
+    _organize_library(get_services(request))
     return RedirectResponse("/library", status_code=303)
 
 
-@router.post("/library/bulk", **PAGE)
-def bulk_library_route(
-    request: Request,
-    action: Annotated[str, Form()],
-    items: Annotated[list[str], Form()] = (),
-):
-    services = get_services(request)
+def _bulk_library_items(services, action: str, items: list[str]) -> None:
+    if action not in ("redownload", "delete"):
+        raise HTTPException(status_code=400, detail="Invalid action")
     for raw in items:
         if ":" not in raw:
             continue
@@ -356,6 +363,15 @@ def bulk_library_route(
                 services.library.forget_song(song.id)
             title = song.title if song is not None else jobs[0].title
             services.library.record_event(title, "deleted", "bulk")
+
+
+@router.post("/library/bulk", **PAGE)
+def bulk_library_route(
+    request: Request,
+    action: Annotated[str, Form()],
+    items: Annotated[list[str], Form()] = (),
+):
+    _bulk_library_items(get_services(request), action, list(items))
     return RedirectResponse("/library", status_code=303)
 
 
@@ -378,36 +394,49 @@ def link_manual_song(
     return RedirectResponse(f"/library/video/{linked.video_id}", status_code=303)
 
 
+def _restore_trash_item(services, name: str) -> None:
+    if services.music_dir is None:
+        return
+    try:
+        restore_from_recycle(services.music_dir, name, services.library)
+        services.library.record_event(name, "restored")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Not found") from exc
+
+
+def _delete_trash_item(services, name: str) -> None:
+    if services.music_dir is None:
+        return
+    try:
+        delete_from_recycle(services.music_dir, name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Not found") from exc
+
+
+def _empty_trash(services) -> None:
+    if services.music_dir is not None:
+        empty_recycle(services.music_dir)
+
+
 @router.post("/library/trash/restore", **PAGE)
 def trash_restore(request: Request, name: Annotated[str, Form()]):
-    services = get_services(request)
-    if services.music_dir is not None:
-        try:
-            restore_from_recycle(services.music_dir, name, services.library)
-            services.library.record_event(name, "restored")
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="Not found") from exc
+    _restore_trash_item(get_services(request), name)
     return RedirectResponse("/library/trash", status_code=303)
 
 
 @router.post("/library/trash/delete", **PAGE)
 def trash_delete(request: Request, name: Annotated[str, Form()]):
-    services = get_services(request)
-    if services.music_dir is not None:
-        try:
-            delete_from_recycle(services.music_dir, name)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _delete_trash_item(get_services(request), name)
     return RedirectResponse("/library/trash", status_code=303)
 
 
 @router.post("/library/trash/empty", **PAGE)
 def trash_empty(request: Request):
-    services = get_services(request)
-    if services.music_dir is not None:
-        empty_recycle(services.music_dir)
+    _empty_trash(get_services(request))
     return RedirectResponse("/library/trash", status_code=303)
 
 
@@ -434,17 +463,15 @@ def _song_view(services, kind: str, ident: str) -> tuple[SimpleNamespace, list[S
     return row, _job_lines(services, jobs)
 
 
-@router.post("/library/{kind}/{ident}/delete", **PAGE)
-def delete_song(request: Request, kind: str, ident: str, scope: Annotated[str, Form()] = ""):
+def _delete_song_item(services, kind: str, ident: str, scope: str = "") -> None:
     if kind not in ("spotify", "video", "song"):
         raise HTTPException(status_code=404, detail="Not found")
-    services = get_services(request)
     song = services.library.get_song_by_identifier(kind, ident)
     jobs = _matching_jobs(services, kind, ident)
     if not jobs and song is None:
         raise HTTPException(status_code=404, detail="Unknown song")
     if scope == "library" and any(job.status in {"queued", "running"} for job in jobs):
-        return JSONResponse({"detail": "This song is still downloading."}, status_code=409)
+        raise HTTPException(status_code=409, detail="This song is still downloading.")
     music = services.music_dir
     raw = song.audio_path if song is not None else services.library.audio_path(ident)
     path = Path(raw) if raw else None
@@ -466,6 +493,11 @@ def delete_song(request: Request, kind: str, ident: str, scope: Annotated[str, F
         services.library.forget_song(song.id)
     label = f"{song.artist} - {song.title}" if song is not None else (f"{jobs[0].artist} - {jobs[0].title}" if jobs else ident)
     services.library.record_event(label, "deleted", scope)
+
+
+@router.post("/library/{kind}/{ident}/delete", **PAGE)
+def delete_song(request: Request, kind: str, ident: str, scope: Annotated[str, Form()] = ""):
+    _delete_song_item(get_services(request), kind, ident, scope=scope)
     return RedirectResponse("/library", status_code=303)
 
 

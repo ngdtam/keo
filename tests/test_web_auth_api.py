@@ -359,3 +359,124 @@ def test_create_app_reset_password_env_preserves_api_key(
             reset_client.get("/api/system/status", headers={"X-Api-Key": rotated_key}).status_code
             == 200
         )
+
+
+def test_external_api_cover_library_trash_review_and_tasks(client, library, tmp_path, monkeypatch):
+    user = library.ensure_auth_user(TOKEN)
+    api_key = user.api_key
+    headers = {"X-Api-Key": api_key}
+
+    # Rescan and organize via JSON API
+    rescan = client.post("/api/library/rescan", headers=headers)
+    assert rescan.status_code == 200
+    assert rescan.json()["ok"] is True
+
+    org = client.post("/api/library/organize", headers=headers)
+    assert org.status_code == 200
+    assert org.json() == {"ok": True, "moved": 0}
+
+    # Add a song on disk and fetch its cover via ?apikey= query param
+    music_dir = client.app.state.services.music_dir
+    audio_file = music_dir / "Sơn Tùng M-TP - Lạc Trôi.mp3"
+    audio_file.write_bytes(b"fake-mp3-bytes")
+    library.mark_owned("vid1", "Sơn Tùng M-TP", "Lạc Trôi", "sp1")
+    library.set_audio_path("sp1", str(audio_file))
+
+    assert client.get("/api/library/spotify/sp1/cover").status_code == 401
+    monkeypatch.setattr("keo.web.routes_library.cover_bytes", lambda path: None)
+    assert client.get(f"/api/library/spotify/sp1/cover?apikey={api_key}").status_code == 404
+    monkeypatch.setattr(
+        "keo.web.routes_library.cover_bytes",
+        lambda path: (b"jpeg_data", "image/jpeg"),
+    )
+    cover = client.get(f"/api/library/spotify/sp1/cover?apikey={api_key}")
+    assert cover.status_code == 200
+    assert cover.content == b"jpeg_data"
+    assert cover.headers["content-type"] == "image/jpeg"
+
+    # Delete song to trash via JSON API
+    del_res = client.delete("/api/library/spotify/sp1?scope=file", headers=headers)
+    assert del_res.status_code == 200
+    assert del_res.json() == {"ok": True, "deleted": "sp1", "scope": "file"}
+    assert not audio_file.exists()
+
+    # Trash list, path traversal protection, restore, delete, and empty via JSON API
+    trash = client.get(f"/api/library/trash?apikey={api_key}").json()
+    assert len(trash["items"]) == 1
+    trashed_name = trash["items"][0]["name"]
+
+    bad_restore = client.post("/api/library/trash/restore", json={"name": "../evil"}, headers=headers)
+    assert bad_restore.status_code == 400
+    bad_delete = client.delete("/api/library/trash/%2e%2e%2fevil", headers=headers)
+    assert bad_delete.status_code == 400
+    missing_restore = client.post(
+        "/api/library/trash/restore", json={"name": "nonexistent.mp3"}, headers=headers
+    )
+    assert missing_restore.status_code == 404
+
+    restored = client.post("/api/library/trash/restore", json={"name": trashed_name}, headers=headers)
+    assert restored.status_code == 200
+    assert restored.json() == {"ok": True}
+    assert audio_file.exists()
+
+    # Bulk delete via JSON API, then permanent trash delete and empty
+    restored_song = library.list_songs()[0]
+    bulk = client.post(
+        "/api/library/bulk",
+        json={"action": "delete", "items": [f"song:{restored_song.id}"]},
+        headers=headers,
+    )
+    assert bulk.status_code == 200
+    assert bulk.json() == {"ok": True, "action": "delete"}
+    assert not audio_file.exists()
+
+    trash_after_bulk = client.get("/api/library/trash", headers=headers).json()["items"]
+    assert len(trash_after_bulk) == 1
+    perm_del = client.delete(
+        f"/api/library/trash/{trash_after_bulk[0]['name']}",
+        headers=headers,
+    )
+    assert perm_del.status_code == 200
+    assert perm_del.json() == {"ok": True}
+    assert client.get("/api/library/trash", headers=headers).json()["items"] == []
+
+    # Empty trash endpoint
+    empty_res = client.delete("/api/library/trash", headers=headers)
+    assert empty_res.status_code == 200
+    assert empty_res.json() == {"ok": True}
+
+    # Watch/unwatch playlist and follow/unfollow artist via JSON API
+    wp = client.post(
+        "/api/review/playlists",
+        json={"playlist_id": "https://music.youtube.com/playlist?list=PLvn", "auto_queue": True},
+        headers=headers,
+    )
+    assert wp.status_code == 200
+    assert wp.json()["playlist_id"] == "PLvn"
+    assert client.post("/api/review/playlists/sync", headers=headers).status_code == 200
+    assert client.delete("/api/review/playlists/PLvn", headers=headers).status_code == 200
+
+    fa = client.post("/api/review/artists", json={"artist": "Sơn Tùng M-TP"}, headers=headers)
+    assert fa.status_code == 200
+    cid = fa.json()["channel_id"]
+    assert client.post("/api/review/artists/sync", headers=headers).status_code == 200
+    assert client.delete(f"/api/review/artists/{cid}", headers=headers).status_code == 200
+
+    # Run scheduled task via JSON API
+    task_ok = client.post("/api/settings/tasks/housekeeping/run", headers=headers)
+    assert task_ok.status_code == 200
+    assert task_ok.json() == {"ok": True, "task": "housekeeping"}
+
+    task_404 = client.post("/api/settings/tasks/unknown_task/run", headers=headers)
+    assert task_404.status_code == 404
+
+    # Validation errors & OpenAPI tags on new endpoints
+    assert client.post("/api/library/bulk", json={"action": "bogus", "items": []}, headers=headers).status_code == 400
+    assert client.delete("/api/library/spotify/sp1?scope=bogus", headers=headers).status_code == 400
+    assert client.post("/api/review/playlists", json={"playlist_id": "   "}, headers=headers).status_code == 400
+    assert client.post("/api/review/artists", json={"artist": "   "}, headers=headers).status_code == 400
+
+    schema = client.get("/openapi.json").json()
+    assert schema["paths"]["/api/library/rescan"]["post"]["tags"] == ["Library"]
+    assert schema["paths"]["/api/review/playlists"]["post"]["tags"] == ["Review & Discovery"]
+    assert schema["paths"]["/api/settings/tasks/{name}/run"]["post"]["tags"] == ["Settings & Tasks"]

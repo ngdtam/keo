@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Form, Request, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse
 from typing import Annotated
 
@@ -250,9 +250,7 @@ def check_updates_route(request: Request):
     return RedirectResponse("/settings", status_code=303)
 
 
-@router.post("/settings/tasks/{name}/run", **PAGE)
-def run_task_route(request: Request, name: str):
-    services = get_services(request)
+def _run_scheduled_task(services, name: str) -> None:
     if name == "history_pull":
         run_pull(
             catalog=services.catalog,
@@ -278,4 +276,11 @@ def run_task_route(request: Request, name: str):
         if services.data_dir is not None:
             backup_data(services.data_dir, services.config_path)
         services.library.record_task_run("backup", 168)
+    else:
+        raise HTTPException(status_code=404, detail="Unknown task")
+
+
+@router.post("/settings/tasks/{name}/run", **PAGE)
+def run_task_route(request: Request, name: str):
+    _run_scheduled_task(get_services(request), name)
     return RedirectResponse("/settings", status_code=303)

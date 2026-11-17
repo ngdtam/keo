@@ -95,16 +95,10 @@ def _extract_playlist_id(raw: str) -> str:
     return value
 
 
-@router.post("/review/playlists/watch", **PAGE)
-def watch_playlist_route(
-    request: Request,
-    playlist_id: Annotated[str, Form()],
-    auto_queue: Annotated[bool, Form()] = False,
-):
-    services = get_services(request)
+def _watch_playlist(services, playlist_id: str, auto_queue: bool = False) -> tuple[str, str]:
     pid = _extract_playlist_id(playlist_id)
     if not pid:
-        return RedirectResponse("/review", status_code=303)
+        raise HTTPException(status_code=400, detail="Playlist ID is required")
     title = "Liked Music" if pid in {"LM", "liked"} else pid
     try:
         fetched_title, _ = services.catalog.playlist(pid)
@@ -113,6 +107,20 @@ def watch_playlist_route(
     except CatalogError:
         pass
     services.library.watch_playlist(pid, title, auto_queue=auto_queue)
+    return pid, title
+
+
+@router.post("/review/playlists/watch", **PAGE)
+def watch_playlist_route(
+    request: Request,
+    playlist_id: Annotated[str, Form()],
+    auto_queue: Annotated[bool, Form()] = False,
+):
+    services = get_services(request)
+    try:
+        _watch_playlist(services, playlist_id, auto_queue=auto_queue)
+    except HTTPException:
+        pass
     return RedirectResponse("/review", status_code=303)
 
 
@@ -142,28 +150,36 @@ def _extract_channel_id(raw: str) -> str | None:
     return None
 
 
-@router.post("/review/artists/follow", **PAGE)
-def follow_artist_route(request: Request, artist: Annotated[str, Form()]):
-    services = get_services(request)
+def _follow_artist(services, artist: str) -> tuple[str, str]:
     query = artist.strip()
     if not query:
-        return RedirectResponse("/review", status_code=303)
+        raise HTTPException(status_code=400, detail="Artist is required")
     cid = _extract_channel_id(query)
     name = query
     try:
         if cid is None:
             found = services.catalog.find_artist(query)
             if found is None:
-                return RedirectResponse("/review", status_code=303)
+                raise HTTPException(status_code=404, detail="Artist not found")
             cid, name = found
         else:
             fetched_name, _ = services.catalog.artist_releases(cid)
             if fetched_name:
                 name = fetched_name
-    except CatalogError:
+    except CatalogError as exc:
         if cid is None:
-            return RedirectResponse("/review", status_code=303)
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
     services.library.follow_artist(cid, name)
+    return cid, name
+
+
+@router.post("/review/artists/follow", **PAGE)
+def follow_artist_route(request: Request, artist: Annotated[str, Form()]):
+    services = get_services(request)
+    try:
+        _follow_artist(services, artist)
+    except HTTPException:
+        pass
     return RedirectResponse("/review", status_code=303)
 
 

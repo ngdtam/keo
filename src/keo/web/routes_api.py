@@ -8,9 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from keo.catalog import CatalogError
+from keo.history import sync_followed_artists, sync_watched_playlists
 from keo.recycle import list_recycle
 from keo.system import _pkg_version, run_health_checks
 from keo.web.auth import (
@@ -21,14 +22,27 @@ from keo.web.auth import (
 )
 from keo.web.deps import _sidebar_status, get_services, require_api, song_json
 from keo.web.routes_library import (
+    _bulk_library_items,
     _collect_rows,
+    _delete_song_item,
+    _delete_trash_item,
+    _empty_trash,
     _format_bytes,
     _library_page_data,
+    _organize_library,
     _plan_organize,
+    _rescan_library,
+    _restore_trash_item,
+    _song_cover_response,
     _song_view,
 )
-from keo.web.routes_queue import _activity_events, _review_candidates
-from keo.web.routes_settings import _context
+from keo.web.routes_queue import (
+    _activity_events,
+    _follow_artist,
+    _review_candidates,
+    _watch_playlist,
+)
+from keo.web.routes_settings import _context, _run_scheduled_task
 
 router = APIRouter()
 API = {"dependencies": [Depends(require_api)]}
@@ -45,6 +59,24 @@ class CredentialsRequest(BaseModel):
     username: str
     password: str
     password_confirmation: str
+
+
+class BulkLibraryRequest(BaseModel):
+    action: str
+    items: list[str] = Field(default_factory=list)
+
+
+class TrashItemRequest(BaseModel):
+    name: str
+
+
+class WatchPlaylistRequest(BaseModel):
+    playlist_id: str
+    auto_queue: bool = False
+
+
+class FollowArtistRequest(BaseModel):
+    artist: str
 
 
 def _json_safe(value: Any) -> Any:
@@ -194,6 +226,24 @@ def api_library_organize_preview(request: Request):
     }
 
 
+@router.post("/api/library/rescan", **API, tags=["Library"])
+def api_library_rescan(request: Request):
+    total_count = _rescan_library(get_services(request))
+    return {"ok": True, "total_count": total_count}
+
+
+@router.post("/api/library/organize", **API, tags=["Library"])
+def api_library_organize(request: Request):
+    moved = _organize_library(get_services(request))
+    return {"ok": True, "moved": moved}
+
+
+@router.post("/api/library/bulk", **API, tags=["Library"])
+def api_library_bulk(request: Request, body: BulkLibraryRequest):
+    _bulk_library_items(get_services(request), body.action, body.items)
+    return {"ok": True, "action": body.action}
+
+
 @router.get("/api/library/trash", **API, tags=["Library"])
 def api_library_trash(request: Request):
     services = get_services(request)
@@ -212,6 +262,29 @@ def api_library_trash(request: Request):
     }
 
 
+@router.post("/api/library/trash/restore", **API, tags=["Library"])
+def api_library_trash_restore(request: Request, body: TrashItemRequest):
+    _restore_trash_item(get_services(request), body.name)
+    return {"ok": True}
+
+
+@router.delete("/api/library/trash", **API, tags=["Library"])
+def api_library_trash_empty(request: Request):
+    _empty_trash(get_services(request))
+    return {"ok": True}
+
+
+@router.delete("/api/library/trash/{name:path}", **API, tags=["Library"])
+def api_library_trash_delete(request: Request, name: str):
+    _delete_trash_item(get_services(request), name)
+    return {"ok": True}
+
+
+@router.get("/api/library/{kind}/{ident}/cover", **API, tags=["Library"])
+def api_library_cover(request: Request, kind: str, ident: str):
+    return _song_cover_response(get_services(request), kind, ident)
+
+
 @router.get("/api/library/{kind}/{ident}", **API, tags=["Library"])
 def api_library_detail(request: Request, kind: str, ident: str, q: str = ""):
     services = get_services(request)
@@ -227,6 +300,14 @@ def api_library_detail(request: Request, kind: str, ident: str, q: str = ""):
         "jobs": [vars(j) for j in job_lines],
         "candidates": candidates,
     }
+
+
+@router.delete("/api/library/{kind}/{ident}", **API, tags=["Library"])
+def api_library_delete(request: Request, kind: str, ident: str, scope: str = "file"):
+    if scope not in ("", "file", "library"):
+        raise HTTPException(status_code=400, detail="Invalid scope")
+    _delete_song_item(get_services(request), kind, ident, scope=scope)
+    return {"ok": True, "deleted": ident, "scope": scope or "file"}
 
 
 @router.get("/api/review/full", **API, tags=["Queue"])
@@ -261,6 +342,48 @@ def api_activity(request: Request):
     }
 
 
+@router.post("/api/review/playlists", **API, tags=["Review & Discovery"])
+def api_review_watch_playlist(request: Request, body: WatchPlaylistRequest):
+    pid, title = _watch_playlist(
+        get_services(request), body.playlist_id, auto_queue=body.auto_queue
+    )
+    return {"ok": True, "playlist_id": pid, "title": title}
+
+
+@router.post("/api/review/playlists/sync", **API, tags=["Review & Discovery"])
+def api_review_sync_playlists(request: Request):
+    services = get_services(request)
+    sync_watched_playlists(
+        catalog=services.catalog, library=services.library, worker=services.worker
+    )
+    return {"ok": True}
+
+
+@router.delete("/api/review/playlists/{playlist_id}", **API, tags=["Review & Discovery"])
+def api_review_unwatch_playlist(request: Request, playlist_id: str):
+    get_services(request).library.unwatch_playlist(playlist_id)
+    return {"ok": True}
+
+
+@router.post("/api/review/artists", **API, tags=["Review & Discovery"])
+def api_review_follow_artist(request: Request, body: FollowArtistRequest):
+    cid, name = _follow_artist(get_services(request), body.artist)
+    return {"ok": True, "channel_id": cid, "name": name}
+
+
+@router.post("/api/review/artists/sync", **API, tags=["Review & Discovery"])
+def api_review_sync_artists(request: Request):
+    services = get_services(request)
+    sync_followed_artists(catalog=services.catalog, library=services.library)
+    return {"ok": True}
+
+
+@router.delete("/api/review/artists/{channel_id}", **API, tags=["Review & Discovery"])
+def api_review_unfollow_artist(request: Request, channel_id: str):
+    get_services(request).library.unfollow_artist(channel_id)
+    return {"ok": True}
+
+
 @router.get("/api/settings", **API, tags=["Settings"])
 def api_settings(request: Request):
     services = get_services(request)
@@ -271,3 +394,9 @@ def api_settings(request: Request):
     ctx["username"] = user.username
     ctx["api_key"] = user.api_key
     return ctx
+
+
+@router.post("/api/settings/tasks/{name}/run", **API, tags=["Settings & Tasks"])
+def api_run_task(request: Request, name: str):
+    _run_scheduled_task(get_services(request), name)
+    return {"ok": True, "task": name}
