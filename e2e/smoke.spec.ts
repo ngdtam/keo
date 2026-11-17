@@ -18,7 +18,7 @@ test('logs in and renders every deployed route without errors', async ({ page })
 
   await page.goto('/');
   await expect(page).toHaveURL(/\/login$/);
-  await page.locator('input[name="token"]').fill(readToken());
+  await page.locator('input[name="password"]').fill(readToken());
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/$/);
 

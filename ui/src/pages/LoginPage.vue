@@ -4,7 +4,10 @@ import { useRouter } from 'vue-router'
 import { apiPostJson } from '../api'
 
 const router = useRouter()
-const token = ref('')
+const username = ref('admin')
+const password = ref('')
+const remember = ref(true)
+const showResetHelp = ref(false)
 const error = ref('')
 const loading = ref(false)
 
@@ -12,7 +15,11 @@ async function onSubmit() {
   error.value = ''
   loading.value = true
   try {
-    await apiPostJson('/api/auth/login', { token: token.value })
+    await apiPostJson('/api/auth/login', {
+      username: username.value,
+      password: password.value,
+      remember: remember.value,
+    })
     await router.push('/')
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Sign in failed'
@@ -30,17 +37,46 @@ async function onSubmit() {
       </template>
 
       <form class="flex flex-col gap-3" @submit.prevent="onSubmit">
-        <UInput
-          v-model="token"
-          name="token"
-          type="password"
-          placeholder="Token"
-          required
-          autofocus
-        />
+        <UFormField label="Username">
+          <UInput
+            v-model="username"
+            name="username"
+            autocomplete="username"
+            placeholder="Username"
+            required
+            autofocus
+            class="w-full"
+          />
+        </UFormField>
+        <UFormField label="Password">
+          <UInput
+            v-model="password"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            placeholder="Password"
+            required
+            class="w-full"
+          />
+        </UFormField>
+        <UCheckbox v-model="remember" name="remember" label="Remember me" />
         <UButton type="submit" color="primary" :loading="loading" block>
           Sign in
         </UButton>
+        <div class="flex justify-center">
+          <UButton
+            type="button"
+            variant="link"
+            color="neutral"
+            size="xs"
+            @click="showResetHelp = !showResetHelp"
+          >
+            Forgot password?
+          </UButton>
+        </div>
+        <p v-if="showResetHelp" class="text-xs text-muted">
+          Set KEO_RESET_PASSWORD=1 in .env, restart Kéo, and sign in with admin and your KEO_TOKEN. Remove KEO_RESET_PASSWORD=1 once you are back in.
+        </p>
         <UAlert v-if="error" color="error" variant="subtle" :description="error" />
       </form>
 

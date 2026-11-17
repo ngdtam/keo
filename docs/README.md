@@ -29,9 +29,20 @@
 
    The image includes Debian's libmediainfo so the library page can show a file's codec and bitrate. A run outside Docker needs `brew install media-info`. Without that library the pages still load and the technical text is absent.
 
-5. Open `http://<server>:8000` on your phone and sign in with `KEO_TOKEN`. To reach the server from outside your home network, use your own VPN or tunnel.
+5. Open `http://<server>:8000` on your phone and sign in with `admin` and your `KEO_TOKEN`. You can change both under Security & API in Settings. To reach the server from outside your home network, use your own VPN or tunnel.
 
 A choice on the Settings page is saved into `keo.toml` and used on the next download. A hand edit of `keo.toml` still needs `docker compose restart keo`.
+
+# Resetting your password
+
+If you change your username or password in Settings and forget it later:
+
+1. Add `KEO_RESET_PASSWORD=1` to `.env`.
+2. Restart the container with `docker compose up -d`.
+3. Sign in with `admin` (or `KEO_USERNAME` if set) and your `KEO_TOKEN`.
+4. Remove `KEO_RESET_PASSWORD=1` from `.env` and restart again so Kéo does not reset the password on the next boot.
+
+Resetting your password leaves your library and API key untouched.
 
 # Development
 

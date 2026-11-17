@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { apiGet, apiPostForm } from '../api'
+import { apiGet, apiPostForm, apiPostJson } from '../api'
 
 interface SettingChoice {
   name: string
@@ -37,6 +37,8 @@ interface SettingsResponse {
   error: string | null
   recycle_days: number
   config_writable: boolean
+  username: string
+  api_key: string
 }
 
 const toast = useToast()
@@ -45,6 +47,11 @@ const data = ref<SettingsResponse | null>(null)
 const loading = ref(false)
 const error = ref('')
 const busy = ref('')
+
+const accountUsername = ref('')
+const newPassword = ref('')
+const confirmPassword = ref('')
+const confirmResetKey = ref(false)
 
 const cookieFile = ref<File | null>(null)
 const notifyUrl = ref('')
@@ -77,6 +84,8 @@ async function loadSettings() {
   try {
     const res = await apiGet<SettingsResponse>('/api/settings')
     data.value = res
+    accountUsername.value = res.username
+    confirmResetKey.value = false
     notifyUrl.value = res.notify_url
     mediaRefreshUrl.value = res.media_refresh_url
   } catch (err) {
@@ -110,6 +119,64 @@ async function uploadCookie() {
   cookieFile.value = null
 }
 
+async function saveCredentials() {
+  const trimmedUsername = accountUsername.value.trim()
+  if (!trimmedUsername) {
+    toast.add({ title: 'Username is required', color: 'error' })
+    return
+  }
+  if (!newPassword.value.trim()) {
+    toast.add({ title: 'Password is required', color: 'error' })
+    return
+  }
+  if (newPassword.value !== confirmPassword.value) {
+    toast.add({ title: 'Passwords do not match', color: 'error' })
+    return
+  }
+  busy.value = 'credentials'
+  try {
+    await apiPostJson('/api/auth/credentials', {
+      username: trimmedUsername,
+      password: newPassword.value,
+      password_confirmation: confirmPassword.value,
+    })
+    newPassword.value = ''
+    confirmPassword.value = ''
+    toast.add({ title: 'Credentials updated', color: 'success' })
+    await loadSettings()
+  } catch (err) {
+    showError(err, 'Failed to update credentials')
+  } finally {
+    busy.value = ''
+  }
+}
+
+async function copyApiKey() {
+  if (!data.value?.api_key) return
+  try {
+    await navigator.clipboard.writeText(data.value.api_key)
+    toast.add({ title: 'API key copied', color: 'success' })
+  } catch (err) {
+    showError(err, 'Failed to copy API key')
+  }
+}
+
+async function resetApiKey() {
+  busy.value = 'api-key-reset'
+  try {
+    const res = await apiPostJson<{ api_key: string }>('/api/auth/api-key/reset')
+    if (data.value) {
+      data.value = { ...data.value, api_key: res.api_key }
+    }
+    confirmResetKey.value = false
+    toast.add({ title: 'API key regenerated', color: 'success' })
+  } catch (err) {
+    showError(err, 'Failed to regenerate API key')
+  } finally {
+    busy.value = ''
+  }
+}
+
 onMounted(loadSettings)
 </script>
 
@@ -127,6 +194,143 @@ onMounted(loadSettings)
         <div v-else-if="data" class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
           <!-- Left column -->
           <div class="flex flex-col gap-4">
+            <UCard>
+              <template #header>
+                <span class="font-medium text-sm">Security &amp; API</span>
+              </template>
+
+              <div class="flex flex-col gap-4">
+                <form class="flex flex-col gap-3" @submit.prevent="saveCredentials">
+                  <UFormField label="Username">
+                    <UInput
+                      v-model="accountUsername"
+                      name="username"
+                      autocomplete="username"
+                      required
+                      class="w-full"
+                    />
+                  </UFormField>
+                  <UFormField label="New password">
+                    <UInput
+                      v-model="newPassword"
+                      name="new_password"
+                      type="password"
+                      autocomplete="new-password"
+                      required
+                      class="w-full"
+                    />
+                  </UFormField>
+                  <UFormField label="Confirm password">
+                    <UInput
+                      v-model="confirmPassword"
+                      name="password_confirmation"
+                      type="password"
+                      autocomplete="new-password"
+                      required
+                      class="w-full"
+                    />
+                  </UFormField>
+                  <div>
+                    <UButton
+                      type="submit"
+                      size="sm"
+                      color="primary"
+                      :disabled="busy !== '' && busy !== 'credentials'"
+                      :loading="busy === 'credentials'"
+                    >
+                      Save credentials
+                    </UButton>
+                  </div>
+                </form>
+
+                <div class="border-t border-default pt-4 flex flex-col gap-3">
+                  <UFormField label="API Key">
+                    <div class="flex flex-wrap items-center gap-2">
+                      <UInput
+                        :model-value="data.api_key"
+                        readonly
+                        class="flex-1 font-mono"
+                      />
+                      <UButton
+                        type="button"
+                        size="sm"
+                        color="neutral"
+                        variant="outline"
+                        icon="i-lucide-copy"
+                        @click="copyApiKey"
+                      >
+                        Copy
+                      </UButton>
+                      <UButton
+                        v-if="!confirmResetKey"
+                        type="button"
+                        size="sm"
+                        color="error"
+                        variant="outline"
+                        icon="i-lucide-refresh-cw"
+                        :disabled="busy !== ''"
+                        @click="confirmResetKey = true"
+                      >
+                        Regenerate
+                      </UButton>
+                    </div>
+                  </UFormField>
+
+                  <div v-if="confirmResetKey" class="flex flex-wrap items-center gap-2">
+                    <span class="text-xs text-muted">
+                      Regenerate API key? Existing external clients will stop working.
+                    </span>
+                    <UButton
+                      type="button"
+                      size="xs"
+                      color="error"
+                      :loading="busy === 'api-key-reset'"
+                      @click="resetApiKey"
+                    >
+                      Confirm regenerate
+                    </UButton>
+                    <UButton
+                      type="button"
+                      size="xs"
+                      color="neutral"
+                      variant="ghost"
+                      :disabled="busy === 'api-key-reset'"
+                      @click="confirmResetKey = false"
+                    >
+                      Cancel
+                    </UButton>
+                  </div>
+
+                  <p class="text-xs text-muted">
+                    Use header X-Api-Key, Authorization: Bearer, or query ?apikey= to connect external apps.
+                  </p>
+
+                  <div class="flex flex-wrap items-center gap-2">
+                    <UButton
+                      href="/docs"
+                      target="_blank"
+                      external
+                      size="xs"
+                      color="neutral"
+                      variant="outline"
+                    >
+                      API Docs
+                    </UButton>
+                    <UButton
+                      href="/openapi.json"
+                      target="_blank"
+                      external
+                      size="xs"
+                      color="neutral"
+                      variant="outline"
+                    >
+                      OpenAPI JSON
+                    </UButton>
+                  </div>
+                </div>
+              </div>
+            </UCard>
+
             <UCard>
               <template #header>
                 <span class="font-medium text-sm">YouTube Music & Cookies</span>
