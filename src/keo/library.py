@@ -265,6 +265,19 @@ class AuthUser:
     session_secret: str = ""
 
 
+class SetupAlreadyCompleteError(Exception):
+    """Raised when initial user setup is attempted after credentials are already set."""
+
+
+def _validate_credentials(username: str, password: str) -> str:
+    norm_username = username.strip().lower()
+    if not norm_username:
+        raise ValueError("Username must not be empty")
+    if not password or not password.strip():
+        raise ValueError("Password must not be empty")
+    return norm_username
+
+
 def hash_password(password: str, salt_hex: str) -> str:
     return hashlib.pbkdf2_hmac(
         "sha512",
@@ -1238,8 +1251,21 @@ class Library:
         return user
 
     def create_initial_user(self, username: str, password: str) -> AuthUser:
-        """Create or update the initial auth user while preserving any existing API key."""
-        return self.update_credentials(username, password)
+        """Create the initial auth user once, preserving any existing pre-seeded API key."""
+        norm_username = _validate_credentials(username, password)
+        with self._lock, self._db:
+            row = self._db.execute(
+                "SELECT api_key, api_key_rotated, password_hash FROM auth_user WHERE id = 1"
+            ).fetchone()
+            if row is not None and row["password_hash"]:
+                raise SetupAlreadyCompleteError("Setup is already complete")
+            salt = secrets.token_hex(16)
+            pw_hash = hash_password(password, salt)
+            session_secret = secrets.token_hex(32)
+            now = _now()
+            return self._upsert_auth_user_locked(
+                row, norm_username, pw_hash, salt, session_secret, now
+            )
 
     def ensure_session_secret(self) -> AuthUser | None:
         """Backfill session_secret for an existing user (e.g. migrated from schema v7)."""
@@ -1281,11 +1307,7 @@ class Library:
             )
 
     def update_credentials(self, username: str, password: str) -> AuthUser:
-        norm_username = username.strip().lower()
-        if not norm_username:
-            raise ValueError("Username must not be empty")
-        if not password or not password.strip():
-            raise ValueError("Password must not be empty")
+        norm_username = _validate_credentials(username, password)
         salt = secrets.token_hex(16)
         pw_hash = hash_password(password, salt)
         session_secret = secrets.token_hex(32)
@@ -1294,23 +1316,36 @@ class Library:
             row = self._db.execute(
                 "SELECT api_key, api_key_rotated FROM auth_user WHERE id = 1"
             ).fetchone()
-            if row is None:
-                api_key = secrets.token_hex(16)
-                rotated = False
-                self._db.execute(
-                    "INSERT INTO auth_user"
-                    " (id, username, password_hash, salt, api_key, api_key_rotated, session_secret, updated_at)"
-                    " VALUES (1, ?, ?, ?, ?, 0, ?, ?)",
-                    (norm_username, pw_hash, salt, api_key, session_secret, now),
-                )
-            else:
-                api_key = row["api_key"]
-                rotated = bool(row["api_key_rotated"])
-                self._db.execute(
-                    "UPDATE auth_user SET username = ?, password_hash = ?, salt = ?, session_secret = ?, updated_at = ?"
-                    " WHERE id = 1",
-                    (norm_username, pw_hash, salt, session_secret, now),
-                )
+            return self._upsert_auth_user_locked(
+                row, norm_username, pw_hash, salt, session_secret, now
+            )
+
+    def _upsert_auth_user_locked(
+        self,
+        row: sqlite3.Row | None,
+        norm_username: str,
+        pw_hash: str,
+        salt: str,
+        session_secret: str,
+        now: str,
+    ) -> AuthUser:
+        if row is None:
+            api_key = secrets.token_hex(16)
+            rotated = False
+            self._db.execute(
+                "INSERT INTO auth_user"
+                " (id, username, password_hash, salt, api_key, api_key_rotated, session_secret, updated_at)"
+                " VALUES (1, ?, ?, ?, ?, 0, ?, ?)",
+                (norm_username, pw_hash, salt, api_key, session_secret, now),
+            )
+        else:
+            api_key = row["api_key"]
+            rotated = bool(row["api_key_rotated"])
+            self._db.execute(
+                "UPDATE auth_user SET username = ?, password_hash = ?, salt = ?, session_secret = ?, updated_at = ?"
+                " WHERE id = 1",
+                (norm_username, pw_hash, salt, session_secret, now),
+            )
         return AuthUser(
             username=norm_username,
             password_hash=pw_hash,

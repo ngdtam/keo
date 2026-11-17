@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { apiGet, apiPostForm, apiPostJson } from '../api'
 
 interface SettingChoice {
@@ -127,6 +127,16 @@ function onYtmFileChange(ev: Event) {
   const input = ev.target as HTMLInputElement
   ytmAuthFile.value = input.files?.[0] ?? null
 }
+
+watch(ytmMode, () => {
+  ytmAuthFile.value = null
+})
+
+watch(showYtmForm, (open) => {
+  if (!open) {
+    ytmAuthFile.value = null
+  }
+})
 
 async function saveYtmAuth() {
   if (ytmMode.value === 'headers' && !ytmHeadersRaw.value.trim()) return

@@ -90,6 +90,10 @@ function onCookieFileChange(ev: Event) {
   cookieFile.value = input.files?.[0] ?? null
 }
 
+watch(ytmMode, () => {
+  authFile.value = null
+})
+
 watch(hasPremium, (checked) => {
   if (!checked) {
     cookieFile.value = null

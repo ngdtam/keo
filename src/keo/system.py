@@ -118,7 +118,7 @@ def run_health_checks(services) -> list[tuple[str, str]]:
     checks: list[tuple[str, str]] = []
 
     if services.ytm_auth is None:
-        checks.append(("warn", "YTM auth: KEO_YTM_AUTH is not set"))
+        checks.append(("warn", "YTM auth: not configured"))
     else:
         try:
             gaps = auth_gaps(services.ytm_auth, services.ytm_client_id, services.ytm_client_secret)

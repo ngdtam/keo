@@ -8,7 +8,7 @@ from starlette.requests import Request
 
 import keo.web.app as web_app
 from keo.catalog import Catalog
-from keo.library import LATEST_VERSION, Library
+from keo.library import LATEST_VERSION, Library, SetupAlreadyCompleteError
 from keo.web import Services, create_app
 from keo.web.auth import (
     COOKIE_NAME,
@@ -64,6 +64,11 @@ def test_create_initial_user_and_verify(tmp_path):
     assert verified is not None
     assert verified.username == "tam"
     assert lib.verify_user("tam", "wrong") is None
+
+    with pytest.raises(SetupAlreadyCompleteError, match="already complete"):
+        lib.create_initial_user("other", "otherpassword")
+    assert lib.verify_user("tam", "mypassword") is not None
+    assert lib.verify_user("other", "otherpassword") is None
 
 
 def test_reset_auth_password_preserves_api_key_and_allows_re_setup(tmp_path):
@@ -537,3 +542,44 @@ def test_setup_remember_false_omits_max_age(library, worker, spotdl, cookies, tm
         assert f"{COOKIE_NAME}=" in set_cookie
         assert "max-age=" not in set_cookie.lower()
         assert client.get("/api/dashboard").status_code == 200
+
+
+def test_ytm_oauth_requires_client_credentials_and_unconfigured_search_returns_502(
+    library, worker, spotdl, cookies, tmp_path
+):
+    data_dir = tmp_path / "data"
+    music_dir = tmp_path / "music"
+    music_dir.mkdir()
+    services = Services(
+        token="",
+        catalog=Catalog(None),
+        library=library,
+        worker=worker,
+        spotdl=spotdl,
+        cookies=cookies,
+        run_later=lambda fn: fn(),
+        data_dir=data_dir,
+        music_dir=music_dir,
+    )
+    with TestClient(create_app(services)) as client:
+        assert (
+            client.post(
+                "/api/auth/setup",
+                json={"username": "tam", "password": "secret", "password_confirmation": "secret"},
+            ).status_code
+            == 200
+        )
+
+        oauth_json = json.dumps({"refresh_token": "r", "access_token": "a"}).encode("utf-8")
+        oauth_res = client.post(
+            "/api/settings/ytm",
+            files={"auth_file": ("browser.json", oauth_json, "application/json")},
+        )
+        assert oauth_res.status_code == 400
+        assert "KEO_YTM_CLIENT_ID" in oauth_res.json()["detail"]
+        assert not (data_dir / "browser.json").exists()
+        assert services.catalog.is_configured() is False
+
+        search_res = client.get("/api/search", params={"q": "test"})
+        assert search_res.status_code == 502
+        assert "not configured" in search_res.json()["detail"].lower()

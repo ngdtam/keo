@@ -108,7 +108,7 @@ def _context(request: Request, error: str | None = None) -> dict:
     auth_error = ""
     gaps: tuple[str, ...] = ()
     if services.ytm_auth is None:
-        auth_error = "KEO_YTM_AUTH is not set"
+        auth_error = "YouTube Music is not configured yet"
     else:
         try:
             gaps = auth_gaps(services.ytm_auth, services.ytm_client_id, services.ytm_client_secret)

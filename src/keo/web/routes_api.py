@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
 import json
+import os
 from pathlib import Path
+import tempfile
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -15,6 +17,7 @@ from ytmusicapi.exceptions import YTMusicError
 
 from keo.catalog import CatalogError, open_ytmusic
 from keo.history import sync_followed_artists, sync_watched_playlists
+from keo.library import SetupAlreadyCompleteError
 from keo.recycle import list_recycle
 from keo.system import _pkg_version, run_health_checks
 from keo.web.auth import (
@@ -137,7 +140,12 @@ def api_setup(request: Request, body: SetupRequest, response: Response):
     if not services.library.needs_setup():
         raise HTTPException(status_code=409, detail="Setup is already complete")
     username, password = _validate_credentials(body)
-    user = services.library.create_initial_user(username, password)
+    try:
+        user = services.library.create_initial_user(username, password)
+    except SetupAlreadyCompleteError as exc:
+        raise HTTPException(status_code=409, detail="Setup is already complete") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     _set_session_cookie(response, services.token, user, remember=body.remember)
     return {"ok": True, "username": user.username, "api_key": user.api_key}
 
@@ -482,18 +490,36 @@ async def api_settings_ytm(request: Request):
     if services.data_dir is None:
         raise HTTPException(status_code=400, detail="Kéo has no data directory.")
     auth_json = await _parse_ytm_auth_json(request)
+    parsed = json.loads(auth_json)
+    if "refresh_token" in parsed and not (services.ytm_client_id and services.ytm_client_secret):
+        raise HTTPException(
+            status_code=400,
+            detail="OAuth auth requires KEO_YTM_CLIENT_ID and KEO_YTM_CLIENT_SECRET.",
+        )
     dest = services.data_dir / "browser.json"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    previous = dest.read_bytes() if dest.exists() else None
-    dest.write_text(auth_json, encoding="utf-8")
+    tmp_path: Path | None = None
     try:
-        ytm = open_ytmusic(dest, services.ytm_client_id, services.ytm_client_secret)
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=dest.parent,
+            prefix=".browser-",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp_file:
+            tmp_file.write(auth_json)
+            tmp_path = Path(tmp_file.name)
+        ytm = open_ytmusic(tmp_path, services.ytm_client_id, services.ytm_client_secret)
+        os.replace(tmp_path, dest)
+        tmp_path = None
+        if "refresh_token" in parsed:
+            ytm = open_ytmusic(dest, services.ytm_client_id, services.ytm_client_secret)
     except Exception as exc:
-        if previous is None:
-            dest.unlink(missing_ok=True)
-        else:
-            dest.write_bytes(previous)
         raise HTTPException(status_code=400, detail=f"Invalid YouTube Music auth: {exc}") from exc
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
     services.catalog.use(ytm)
     services.ytm_auth = dest
     return {"ok": True, "ytm_configured": True}
