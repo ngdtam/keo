@@ -65,6 +65,10 @@ class CredentialsRequest(BaseModel):
     password_confirmation: str
 
 
+class SetupRequest(CredentialsRequest):
+    remember: bool = True
+
+
 class BulkLibraryRequest(BaseModel):
     action: str
     items: list[str] = Field(default_factory=list)
@@ -128,13 +132,13 @@ def api_auth_status(request: Request):
 
 
 @router.post("/api/auth/setup", tags=["Auth"])
-def api_setup(request: Request, body: CredentialsRequest, response: Response):
+def api_setup(request: Request, body: SetupRequest, response: Response):
     services = get_services(request)
     if not services.library.needs_setup():
         raise HTTPException(status_code=409, detail="Setup is already complete")
     username, password = _validate_credentials(body)
     user = services.library.create_initial_user(username, password)
-    _set_session_cookie(response, services.token, user, remember=True)
+    _set_session_cookie(response, services.token, user, remember=body.remember)
     return {"ok": True, "username": user.username, "api_key": user.api_key}
 
 

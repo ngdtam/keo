@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { apiGet, apiPostForm, apiPostJson } from '../api'
 
@@ -90,6 +90,12 @@ function onCookieFileChange(ev: Event) {
   cookieFile.value = input.files?.[0] ?? null
 }
 
+watch(hasPremium, (checked) => {
+  if (!checked) {
+    cookieFile.value = null
+  }
+})
+
 async function saveAndFinish() {
   step2Error.value = ''
   step2Loading.value = true
@@ -102,11 +108,10 @@ async function saveAndFinish() {
 
     if (hasPremium.value && cookieFile.value) {
       await apiPostForm('/settings/cookie', { cookie: cookieFile.value })
-    }
-
-    if (hasPremium.value && usePremiumQuality.value) {
-      await apiPostForm('/settings', { format: 'opus' })
-      await apiPostForm('/settings', { bitrate: 'disable' })
+      if (usePremiumQuality.value) {
+        await apiPostForm('/settings', { format: 'opus' })
+        await apiPostForm('/settings', { bitrate: 'disable' })
+      }
     }
 
     await router.push('/')
@@ -253,6 +258,7 @@ async function skipForNow() {
 
             <UCheckbox
               v-model="usePremiumQuality"
+              :disabled="!cookieFile"
               label="Switch download quality to Opus / best bitrate"
             />
           </div>

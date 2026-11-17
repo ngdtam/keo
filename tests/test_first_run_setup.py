@@ -506,3 +506,34 @@ def test_v7_migrated_user_login_without_token_backfills_session_secret(
         refreshed = lib.get_auth_user()
         assert refreshed is not None
         assert len(refreshed.session_secret) == 64
+
+
+def test_setup_remember_false_omits_max_age(library, worker, spotdl, cookies, tmp_path):
+    music_dir = tmp_path / "music"
+    music_dir.mkdir()
+    services = Services(
+        token="",
+        catalog=Catalog(None),
+        library=library,
+        worker=worker,
+        spotdl=spotdl,
+        cookies=cookies,
+        run_later=lambda fn: fn(),
+        data_dir=tmp_path / "data",
+        music_dir=music_dir,
+    )
+    with TestClient(create_app(services)) as client:
+        res = client.post(
+            "/api/auth/setup",
+            json={
+                "username": "tam",
+                "password": "secret",
+                "password_confirmation": "secret",
+                "remember": False,
+            },
+        )
+        assert res.status_code == 200
+        set_cookie = res.headers.get("set-cookie", "")
+        assert f"{COOKIE_NAME}=" in set_cookie
+        assert "max-age=" not in set_cookie.lower()
+        assert client.get("/api/dashboard").status_code == 200
