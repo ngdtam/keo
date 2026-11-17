@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Request
 
 from keo.web.deps import get_services, require_api, song_json
 
-router = APIRouter()
+router = APIRouter(tags=["Search"])
 
 
 @router.get("/api/search", dependencies=[Depends(require_api)])

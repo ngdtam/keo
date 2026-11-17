@@ -8,7 +8,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Security
+from fastapi.security import HTTPAuthorizationCredentials
 
 from keo.catalog import Catalog
 from keo.cookies import CookieGate
@@ -17,7 +18,7 @@ from keo.jobs import Worker
 from keo.library import Library
 from keo.records import SongRow
 from keo.spotdl_cmd import Spotdl
-from keo.web.auth import is_authorized
+from keo.web.auth import api_key_header, api_key_query, bearer_auth, is_authorized
 
 def _sidebar_status(request: Request) -> dict[str, Any]:
     services = getattr(getattr(request.app, "state", None), "services", None)
@@ -68,13 +69,19 @@ def get_services(request: Request) -> Services:
     return request.app.state.services
 
 
-def require_api(request: Request) -> None:
-    if not is_authorized(request, get_services(request).token):
+def require_api(
+    request: Request,
+    x_api_key: str | None = Security(api_key_header),
+    query_api_key: str | None = Security(api_key_query),
+    bearer: HTTPAuthorizationCredentials | None = Security(bearer_auth),
+) -> None:
+    provided = x_api_key or query_api_key or (bearer.credentials if bearer else None)
+    if not is_authorized(request, get_services(request), provided_key=provided):
         raise HTTPException(status_code=401, detail="Missing or wrong token")
 
 
 def require_page(request: Request) -> None:
-    if not is_authorized(request, get_services(request).token):
+    if not is_authorized(request, get_services(request)):
         raise LoginRequired()
 
 

@@ -12,7 +12,7 @@ def test_api_login_sets_cookie_and_rejects_bad_token(client):
 
     ok = client.post("/api/auth/login", json={"token": TOKEN})
     assert ok.status_code == 200
-    assert ok.json() == {"ok": True}
+    assert ok.json()["ok"] is True
     assert "keo_session" in ok.cookies
 
     dash = client.get("/api/dashboard")

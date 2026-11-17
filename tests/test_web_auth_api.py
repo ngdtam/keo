@@ -1,14 +1,16 @@
 import sqlite3
 from types import SimpleNamespace
 
+from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from keo.cookies import CookieGate
 from keo.jobs import Worker
 from keo.library import LATEST_VERSION, Library
 from keo.system import run_health_checks
+from keo.web import Services, create_app
 from keo.web.auth import COOKIE_NAME, extract_api_key, is_authorized, session_value
-from tests.fakes import FakeSpotdl
+from tests.fakes import TOKEN, FakeSpotdl
 
 
 def _make_request(
@@ -188,3 +190,172 @@ def test_run_health_checks_api_key_length(tmp_path):
     )
     ok_checks = run_health_checks(ok_services)
     assert all("shorter than 20 characters" not in msg for _, msg in ok_checks)
+
+
+def test_login_username_password_remember_and_credentials_update(client):
+    # Wrong password rejected
+    bad = client.post(
+        "/api/auth/login",
+        json={"username": "admin", "password": "wrong", "remember": False},
+    )
+    assert bad.status_code == 401
+
+    # Session-only login (remember=False -> no Max-Age in Set-Cookie)
+    ok_session = client.post(
+        "/api/auth/login",
+        json={"username": "  Admin ", "password": TOKEN, "remember": False},
+    )
+    assert ok_session.status_code == 200
+    assert ok_session.json() == {"ok": True, "username": "admin"}
+    assert "max-age" not in ok_session.headers.get("set-cookie", "").lower()
+
+    # Persistent login (remember=True -> Max-Age present)
+    ok_persist = client.post(
+        "/api/auth/login",
+        json={"username": "admin", "password": TOKEN, "remember": True},
+    )
+    assert ok_persist.status_code == 200
+    assert "max-age=2592000" in ok_persist.headers.get("set-cookie", "").lower()
+    old_cookie = ok_persist.cookies.get(COOKIE_NAME)
+    assert old_cookie
+
+    # Validation errors on credentials update
+    mismatch = client.post(
+        "/api/auth/credentials",
+        json={"username": "tam", "password": "newpassword", "password_confirmation": "different"},
+    )
+    assert mismatch.status_code == 400
+    assert "match" in mismatch.json()["detail"].lower()
+
+    blank = client.post(
+        "/api/auth/credentials",
+        json={"username": "   ", "password": "newpassword", "password_confirmation": "newpassword"},
+    )
+    assert blank.status_code == 400
+
+    # Valid credentials update refreshes cookie and updates username
+    upd = client.post(
+        "/api/auth/credentials",
+        json={"username": "  Tam ", "password": "newpassword", "password_confirmation": "newpassword"},
+    )
+    assert upd.status_code == 200
+    assert upd.json() == {"ok": True, "username": "tam"}
+    assert client.get("/api/dashboard").status_code == 200
+
+    # Older browser cookie is rejected with 401 after credentials update
+    with TestClient(client.app) as stale_client:
+        stale_client.cookies.set(COOKIE_NAME, old_cookie)
+        assert stale_client.get("/api/dashboard").status_code == 401
+
+    # Old password no longer works on a fresh login; new username + password works
+    client.post("/api/auth/logout")
+    assert client.post("/api/auth/login", json={"username": "admin", "password": TOKEN}).status_code == 401
+    assert client.post("/api/auth/login", json={"username": "TAM", "password": "newpassword"}).status_code == 200
+
+
+def test_api_key_headers_query_rotation_and_session_isolation(client):
+    # Log in as browser user
+    client.post("/api/auth/login", json={"username": "admin", "password": TOKEN})
+    settings_res = client.get("/api/settings")
+    assert settings_res.status_code == 200
+    initial_api_key = settings_res.json()["api_key"]
+    assert settings_res.json()["username"] == "admin"
+    assert len(initial_api_key) == 32
+
+    # Clear cookies to act as an external client
+    client.cookies.clear()
+
+    # 1. X-Api-Key header works
+    assert client.get("/api/system/status", headers={"X-Api-Key": initial_api_key}).status_code == 200
+    # 2. ?apikey= query param works
+    assert client.get(f"/api/system/status?apikey={initial_api_key}").status_code == 200
+    # 3. Authorization: Bearer works
+    assert client.get("/api/system/status", headers={"Authorization": f"Bearer {initial_api_key}"}).status_code == 200
+
+    # Rotate API key while logged in via browser session
+    client.post("/api/auth/login", json={"username": "admin", "password": TOKEN})
+    rot = client.post("/api/auth/api-key/reset")
+    assert rot.status_code == 200
+    new_key = rot.json()["api_key"]
+    assert len(new_key) == 32
+    assert new_key != initial_api_key
+
+    # Browser session still works after API key rotation!
+    assert client.get("/api/dashboard").status_code == 200
+
+    # External client: old key and bootstrap TOKEN now rejected, new_key works
+    client.cookies.clear()
+    assert client.get("/api/system/status", headers={"X-Api-Key": initial_api_key}).status_code == 401
+    assert client.get("/api/system/status", headers={"Authorization": f"Bearer {TOKEN}"}).status_code == 401
+    assert client.get("/api/system/status", headers={"X-Api-Key": new_key}).status_code == 200
+
+
+def test_ping_cors_and_openapi_security_schemes(client):
+    # Public /ping requires no auth
+    ping = client.get("/ping")
+    assert ping.status_code == 200
+    assert ping.json() == {"status": "ok"}
+
+    # CORS preflight from an external website origin
+    cors = client.options(
+        "/api/library",
+        headers={
+            "Origin": "https://dashboard.example.com",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "X-Api-Key",
+        },
+    )
+    assert cors.status_code == 200
+    assert cors.headers.get("access-control-allow-origin") == "*"
+    assert "access-control-allow-credentials" not in cors.headers
+
+    # OpenAPI schema includes X-Api-Key, apikey, and BearerAuth securitySchemes
+    schema = client.get("/openapi.json").json()
+    schemes = schema["components"]["securitySchemes"]
+    assert "X-Api-Key" in schemes
+    assert schemes["X-Api-Key"]["in"] == "header"
+    assert "apikey" in schemes
+    assert schemes["apikey"]["in"] == "query"
+    assert "BearerAuth" in schemes
+
+
+def test_create_app_reset_password_env_preserves_api_key(
+    catalog, library, worker, spotdl, cookies, tmp_path, monkeypatch
+):
+    library.ensure_auth_user(TOKEN)
+    library.update_credentials("customuser", "custom-pass")
+    rotated_key = library.reset_api_key()
+
+    monkeypatch.setenv("KEO_RESET_PASSWORD", "1")
+    monkeypatch.setenv("KEO_USERNAME", "admin")
+    services = Services(
+        token=TOKEN,
+        catalog=catalog,
+        library=library,
+        worker=worker,
+        spotdl=spotdl,
+        cookies=cookies,
+        run_later=lambda fn: fn(),
+        music_dir=tmp_path,
+    )
+    with TestClient(create_app(services)) as reset_client:
+        # Custom credentials replaced by default username + services.token
+        assert (
+            reset_client.post(
+                "/api/auth/login",
+                json={"username": "customuser", "password": "custom-pass"},
+            ).status_code
+            == 401
+        )
+        assert (
+            reset_client.post(
+                "/api/auth/login",
+                json={"username": "admin", "password": TOKEN},
+            ).status_code
+            == 200
+        )
+        # Existing API key was preserved across the password reset
+        assert (
+            reset_client.get("/api/system/status", headers={"X-Api-Key": rotated_key}).status_code
+            == 200
+        )

@@ -34,6 +34,16 @@ bearer_auth = HTTPBearer(
 )
 
 
+def ensure_services_auth_user(services: Any, *, reset_password: bool = False) -> AuthUser:
+    """Seed or reset the single auth_user row from Services and KEO_* env defaults."""
+    return services.library.ensure_auth_user(
+        services.token,
+        default_username=os.environ.get("KEO_USERNAME", "admin"),
+        default_api_key=os.environ.get("KEO_API_KEY", ""),
+        reset_password=reset_password,
+    )
+
+
 def session_value(token: str, user: AuthUser | None = None) -> str:
     if user is None:
         key = token.encode()
@@ -66,8 +76,7 @@ def _app_services(request: Request) -> Any:
 
 
 def is_authorized(request: Request, target: Any, provided_key: str | None = None) -> bool:
-    is_legacy_str = isinstance(target, str)
-    if is_legacy_str:
+    if isinstance(target, str):
         token = target
         services = _app_services(request)
     else:
@@ -77,8 +86,7 @@ def is_authorized(request: Request, target: Any, provided_key: str | None = None
     user: AuthUser | None = None
     library = getattr(services, "library", None)
     if library is not None and token:
-        default_username = os.environ.get("KEO_USERNAME", "admin")
-        user = library.ensure_auth_user(token, default_username=default_username)
+        user = ensure_services_auth_user(services)
 
     candidate_key = extract_api_key(request, provided_key)
     if candidate_key:
@@ -96,9 +104,5 @@ def is_authorized(request: Request, target: Any, provided_key: str | None = None
     if not cookie or not token:
         return False
     if user is not None:
-        if hmac.compare_digest(cookie.encode(), session_value(token, user).encode()):
-            return True
-        if is_legacy_str:
-            return hmac.compare_digest(cookie.encode(), session_value(token).encode())
-        return False
+        return hmac.compare_digest(cookie.encode(), session_value(token, user).encode())
     return hmac.compare_digest(cookie.encode(), session_value(token).encode())

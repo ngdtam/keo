@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Request
 
 from keo.web.deps import get_services, require_api, song_json
 
-router = APIRouter()
+router = APIRouter(tags=["Browse"])
 API = {"dependencies": [Depends(require_api)]}
 
 

@@ -19,7 +19,7 @@ from keo.library import Job
 from keo.web.deps import get_services, require_api, require_download, require_page
 
 log = logging.getLogger(__name__)
-router = APIRouter()
+router = APIRouter(tags=["Queue"])
 PAGE = {"dependencies": [Depends(require_page)]}
 API = {"dependencies": [Depends(require_api)]}
 

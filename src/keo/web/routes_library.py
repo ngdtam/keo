@@ -23,7 +23,7 @@ from keo.scan import organize_library, plan_organize, scan
 from keo.web.deps import get_services, require_api, require_download, require_page
 from keo.web.routes_queue import _detail, format_job_time, queued
 
-router = APIRouter()
+router = APIRouter(tags=["Library"])
 PAGE = {"dependencies": [Depends(require_page)]}
 API = {"dependencies": [Depends(require_api)]}
 

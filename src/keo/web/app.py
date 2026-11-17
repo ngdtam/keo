@@ -7,11 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from keo.catalog import CatalogError
-from keo.web.auth import is_authorized
+from keo.web.auth import ensure_services_auth_user, is_authorized
 from keo.web.deps import LoginRequired, Services
 from keo.web.routes_api import router as api_router
 from keo.web.routes_library import router as library_router
@@ -41,13 +42,45 @@ SPA_ROUTES = (
 )
 
 
+OPENAPI_TAGS = [
+    {"name": "System", "description": "Health checks and system status."},
+    {"name": "Auth", "description": "Session sign-in, credentials, and API key management."},
+    {"name": "Library", "description": "Downloaded tracks, organization, and trash."},
+    {"name": "Search", "description": "YouTube Music song search and suggestions."},
+    {"name": "Browse", "description": "Charts, moods, playlists, and song radio."},
+    {"name": "Queue", "description": "Downloads, jobs, review queue, and history."},
+    {"name": "Settings", "description": "Configuration and health diagnostics."},
+]
+
+
 def create_app(
     services: Services,
     lifespan: Any = None,
     serve_ui: bool | None = None,
 ) -> FastAPI:
-    app = FastAPI(title="Kéo", lifespan=lifespan)
+    ensure_services_auth_user(
+        services,
+        reset_password=os.environ.get("KEO_RESET_PASSWORD") == "1",
+    )
+
+    app = FastAPI(
+        title="Kéo",
+        description="Self-hosted YouTube Music downloader, library manager, and external REST API.",
+        openapi_tags=OPENAPI_TAGS,
+        lifespan=lifespan,
+    )
     app.state.services = services
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @app.get("/ping", tags=["System"])
+    def ping():
+        return {"status": "ok"}
 
     if serve_ui is None:
         serve_ui = (
@@ -61,7 +94,7 @@ def create_app(
             app.mount("/assets", StaticFiles(directory=assets_dir), name="ui-assets")
 
         async def spa_index(request: Request):
-            if request.url.path != "/login" and not is_authorized(request, services.token):
+            if request.url.path != "/login" and not is_authorized(request, services):
                 return RedirectResponse("/login", status_code=303)
             return FileResponse(index_html)
 
