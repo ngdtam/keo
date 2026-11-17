@@ -151,10 +151,37 @@ async function saveCredentials() {
   }
 }
 
-async function copyApiKey() {
-  if (!data.value?.api_key) return
+function copyWithTextarea(text: string): boolean {
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.left = '-9999px'
+  document.body.appendChild(textarea)
+  textarea.select()
   try {
-    await navigator.clipboard.writeText(data.value.api_key)
+    return document.execCommand('copy')
+  } finally {
+    document.body.removeChild(textarea)
+  }
+}
+
+async function copyApiKey() {
+  const key = data.value?.api_key
+  if (!key) return
+  try {
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(key)
+        toast.add({ title: 'API key copied', color: 'success' })
+        return
+      } catch {
+        // Fall back to execCommand when clipboard API is blocked on non-HTTPS origins
+      }
+    }
+    if (!copyWithTextarea(key)) {
+      throw new Error('Failed to copy API key')
+    }
     toast.add({ title: 'API key copied', color: 'success' })
   } catch (err) {
     showError(err, 'Failed to copy API key')
@@ -250,6 +277,7 @@ onMounted(loadSettings)
                         :model-value="data.api_key"
                         readonly
                         class="flex-1 font-mono"
+                        @focus="($event.target as HTMLInputElement)?.select()"
                       />
                       <UButton
                         type="button"

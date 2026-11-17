@@ -1,21 +1,25 @@
+async function parseErrorDetail(res: Response, fallback: string): Promise<string> {
+  try {
+    const data = await res.json()
+    if (data && typeof data.detail === 'string' && data.detail) {
+      return data.detail
+    }
+  } catch {
+    // ignore non-JSON error bodies
+  }
+  return fallback
+}
+
 async function handleResponse(res: Response): Promise<Response> {
   if (res.status === 401) {
+    const detail = await parseErrorDetail(res, 'Unauthorized')
     if (window.location.pathname !== '/login') {
       window.location.href = '/login'
     }
-    throw new Error('Unauthorized')
+    throw new Error(detail)
   }
   if (!res.ok) {
-    let detail = `Request failed (${res.status})`
-    try {
-      const data = await res.json()
-      if (data && typeof data.detail === 'string' && data.detail) {
-        detail = data.detail
-      }
-    } catch {
-      // ignore non-JSON error bodies
-    }
-    throw new Error(detail)
+    throw new Error(await parseErrorDetail(res, `Request failed (${res.status})`))
   }
   return res
 }

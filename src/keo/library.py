@@ -1155,6 +1155,10 @@ class Library:
         default_api_key: str = "",
         reset_password: bool = False,
     ) -> AuthUser:
+        if not reset_password:
+            existing = self.get_auth_user()
+            if existing is not None:
+                return existing
         norm_username = default_username.strip().lower() or "admin"
         with self._lock, self._db:
             row = self._db.execute(
@@ -1164,7 +1168,7 @@ class Library:
             if row is None:
                 salt = secrets.token_hex(16)
                 pw_hash = hash_password(default_password, salt)
-                api_key = default_api_key or secrets.token_hex(16)
+                api_key = default_api_key.strip() or secrets.token_hex(16)
                 now = _now()
                 self._db.execute(
                     "INSERT INTO auth_user"
@@ -1217,7 +1221,7 @@ class Library:
         norm_username = username.strip().lower()
         if not norm_username:
             raise ValueError("Username must not be empty")
-        if not password:
+        if not password or not password.strip():
             raise ValueError("Password must not be empty")
         salt = secrets.token_hex(16)
         pw_hash = hash_password(password, salt)

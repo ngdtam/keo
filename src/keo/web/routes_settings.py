@@ -36,7 +36,7 @@ from keo.system import (
 )
 from keo.web.deps import get_services, require_page
 
-router = APIRouter()
+router = APIRouter(tags=["Settings"])
 PAGE = {"dependencies": [Depends(require_page)]}
 COOKIE_LIMIT = 1048576
 

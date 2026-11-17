@@ -1,6 +1,7 @@
 import sqlite3
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
@@ -46,6 +47,14 @@ def test_library_auth_user_seed_verify_update_and_rotate(tmp_path):
     assert lib.verify_user("ADMIN ", "initial-secret") is not None
     assert lib.verify_user("admin", "wrong-password") is None
     assert lib.verify_user("other", "initial-secret") is None
+
+    # Blank username or password rejected by update_credentials
+    with pytest.raises(ValueError, match="Username"):
+        lib.update_credentials("   ", "valid-pass")
+    with pytest.raises(ValueError, match="Password"):
+        lib.update_credentials("admin", "")
+    with pytest.raises(ValueError, match="Password"):
+        lib.update_credentials("admin", "   ")
 
     # Updating credentials hashes new password and normalizes username
     updated = lib.update_credentials("  TamNguyen ", "new-pass-123")
@@ -233,6 +242,12 @@ def test_login_username_password_remember_and_credentials_update(client):
     )
     assert blank.status_code == 400
 
+    blank_pw = client.post(
+        "/api/auth/credentials",
+        json={"username": "tam", "password": "   ", "password_confirmation": "   "},
+    )
+    assert blank_pw.status_code == 400
+
     # Valid credentials update refreshes cookie and updates username
     upd = client.post(
         "/api/auth/credentials",
@@ -265,8 +280,16 @@ def test_api_key_headers_query_rotation_and_session_isolation(client):
     # Clear cookies to act as an external client
     client.cookies.clear()
 
-    # 1. X-Api-Key header works
-    assert client.get("/api/system/status", headers={"X-Api-Key": initial_api_key}).status_code == 200
+    # 1. X-Api-Key header works and returns full status payload
+    status_res = client.get("/api/system/status", headers={"X-Api-Key": initial_api_key})
+    assert status_res.status_code == 200
+    status_body = status_res.json()
+    assert status_body["app"] == "Kéo"
+    assert isinstance(status_body["version"], str) and status_body["version"]
+    assert status_body["library_count"] == 0
+    assert status_body["active_jobs"] == 0
+    assert status_body["review_count"] == 0
+    assert status_body["health"] in {"ok", "warn"}
     # 2. ?apikey= query param works
     assert client.get(f"/api/system/status?apikey={initial_api_key}").status_code == 200
     # 3. Authorization: Bearer works

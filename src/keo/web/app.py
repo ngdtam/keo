@@ -49,7 +49,9 @@ OPENAPI_TAGS = [
     {"name": "Search", "description": "YouTube Music song search and suggestions."},
     {"name": "Browse", "description": "Charts, moods, playlists, and song radio."},
     {"name": "Queue", "description": "Downloads, jobs, review queue, and history."},
+    {"name": "Review & Discovery", "description": "Watched playlists and followed artists."},
     {"name": "Settings", "description": "Configuration and health diagnostics."},
+    {"name": "Settings & Tasks", "description": "Manual execution of scheduled maintenance tasks."},
 ]
 
 

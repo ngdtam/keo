@@ -137,6 +137,7 @@ def run_health_checks(services) -> list[tuple[str, str]]:
         user = services.library.ensure_auth_user(
             services.token,
             default_username=os.environ.get("KEO_USERNAME", "admin"),
+            default_api_key=os.environ.get("KEO_API_KEY", ""),
         )
         if len(user.api_key) < 20:
             checks.append(("warn", "API key: shorter than 20 characters"))

@@ -69,6 +69,7 @@ async function onSubmit() {
             variant="link"
             color="neutral"
             size="xs"
+            :aria-expanded="showResetHelp"
             @click="showResetHelp = !showResetHelp"
           >
             Forgot password?
