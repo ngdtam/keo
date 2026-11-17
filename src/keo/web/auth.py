@@ -34,8 +34,12 @@ bearer_auth = HTTPBearer(
 )
 
 
-def ensure_services_auth_user(services: Any, *, reset_password: bool = False) -> AuthUser:
+def ensure_services_auth_user(services: Any, *, reset_password: bool = False) -> AuthUser | None:
     """Seed or reset the single auth_user row from Services and KEO_* env defaults."""
+    if not getattr(services, "token", ""):
+        if reset_password:
+            services.library.reset_auth_password()
+        return services.library.get_auth_user()
     return services.library.ensure_auth_user(
         services.token,
         default_username=os.environ.get("KEO_USERNAME", "admin"),
@@ -48,7 +52,8 @@ def session_value(token: str, user: AuthUser | None = None) -> str:
     if user is None:
         key = token.encode()
     else:
-        key = f"{user.username}:{user.password_hash}:{token}".encode()
+        secret = user.session_secret or token
+        key = f"{user.username}:{user.password_hash}:{secret}".encode()
     return hmac.new(key, b"keo-session", hashlib.sha256).hexdigest()
 
 
@@ -85,15 +90,15 @@ def is_authorized(request: Request, target: Any, provided_key: str | None = None
 
     user: AuthUser | None = None
     library = getattr(services, "library", None)
-    if library is not None and token:
+    if library is not None:
         user = ensure_services_auth_user(services)
 
     candidate_key = extract_api_key(request, provided_key)
     if candidate_key:
         if user is not None:
-            if hmac.compare_digest(candidate_key.encode(), user.api_key.encode()):
+            if user.api_key and hmac.compare_digest(candidate_key.encode(), user.api_key.encode()):
                 return True
-            if not user.api_key_rotated and hmac.compare_digest(
+            if token and not user.api_key_rotated and hmac.compare_digest(
                 candidate_key.encode(), token.encode()
             ):
                 return True
@@ -101,8 +106,12 @@ def is_authorized(request: Request, target: Any, provided_key: str | None = None
         return bool(token) and hmac.compare_digest(candidate_key.encode(), token.encode())
 
     cookie = request.cookies.get(COOKIE_NAME, "")
-    if not cookie or not token:
+    if not cookie:
         return False
     if user is not None:
+        if not user.password_hash or not (user.session_secret or token):
+            return False
         return hmac.compare_digest(cookie.encode(), session_value(token, user).encode())
+    if not token:
+        return False
     return hmac.compare_digest(cookie.encode(), session_value(token).encode())

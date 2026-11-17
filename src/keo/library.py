@@ -152,6 +152,7 @@ CREATE TABLE IF NOT EXISTS auth_user (
     salt TEXT NOT NULL,
     api_key TEXT NOT NULL,
     api_key_rotated INTEGER NOT NULL DEFAULT 0,
+    session_secret TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL
 );
 """
@@ -261,6 +262,7 @@ class AuthUser:
     api_key: str
     api_key_rotated: bool
     updated_at: str
+    session_secret: str = ""
 
 
 def hash_password(password: str, salt_hex: str) -> str:
@@ -307,7 +309,7 @@ def _artist_in_filename(artist: str, audio_path: str) -> bool:
     return bool(artist_norm) and (artist_norm in filename_norm or f" {artist_norm} " in f" {filename_norm} ")
 
 
-LATEST_VERSION = 7
+LATEST_VERSION = 8
 
 
 def _row_to_song(row: sqlite3.Row) -> Song:
@@ -344,6 +346,7 @@ def _row_to_auth_user(row: sqlite3.Row) -> AuthUser:
         api_key=row["api_key"],
         api_key_rotated=bool(row["api_key_rotated"]),
         updated_at=row["updated_at"],
+        session_secret=row["session_secret"],
     )
 
 
@@ -424,6 +427,14 @@ class Library:
                     """
                 )
                 self._db.execute("PRAGMA user_version = 7")
+        if version < 8:
+            auth_columns = {row[1] for row in self._db.execute("PRAGMA table_info(auth_user)")}
+            with self._db:
+                if "session_secret" not in auth_columns:
+                    self._db.execute(
+                        "ALTER TABLE auth_user ADD COLUMN session_secret TEXT NOT NULL DEFAULT ''"
+                    )
+                self._db.execute("PRAGMA user_version = 8")
 
     def _accept_close_match_review(self) -> None:
         row = self._db.execute(
@@ -1143,10 +1154,15 @@ class Library:
     def get_auth_user(self) -> AuthUser | None:
         with self._lock:
             row = self._db.execute(
-                "SELECT username, password_hash, salt, api_key, api_key_rotated, updated_at"
+                "SELECT username, password_hash, salt, api_key, api_key_rotated, session_secret, updated_at"
                 " FROM auth_user WHERE id = 1"
             ).fetchone()
         return _row_to_auth_user(row) if row is not None else None
+
+    def needs_setup(self) -> bool:
+        """Return True when no user or no password has been configured yet."""
+        user = self.get_auth_user()
+        return user is None or not user.password_hash
 
     def ensure_auth_user(
         self,
@@ -1162,19 +1178,20 @@ class Library:
         norm_username = default_username.strip().lower() or "admin"
         with self._lock, self._db:
             row = self._db.execute(
-                "SELECT username, password_hash, salt, api_key, api_key_rotated, updated_at"
+                "SELECT username, password_hash, salt, api_key, api_key_rotated, session_secret, updated_at"
                 " FROM auth_user WHERE id = 1"
             ).fetchone()
             if row is None:
                 salt = secrets.token_hex(16)
                 pw_hash = hash_password(default_password, salt)
                 api_key = default_api_key.strip() or secrets.token_hex(16)
+                session_secret = secrets.token_hex(32)
                 now = _now()
                 self._db.execute(
                     "INSERT INTO auth_user"
-                    " (id, username, password_hash, salt, api_key, api_key_rotated, updated_at)"
-                    " VALUES (1, ?, ?, ?, ?, 0, ?)",
-                    (norm_username, pw_hash, salt, api_key, now),
+                    " (id, username, password_hash, salt, api_key, api_key_rotated, session_secret, updated_at)"
+                    " VALUES (1, ?, ?, ?, ?, 0, ?, ?)",
+                    (norm_username, pw_hash, salt, api_key, session_secret, now),
                 )
                 return AuthUser(
                     username=norm_username,
@@ -1183,15 +1200,17 @@ class Library:
                     api_key=api_key,
                     api_key_rotated=False,
                     updated_at=now,
+                    session_secret=session_secret,
                 )
             if reset_password:
                 salt = secrets.token_hex(16)
                 pw_hash = hash_password(default_password, salt)
+                session_secret = secrets.token_hex(32)
                 now = _now()
                 self._db.execute(
-                    "UPDATE auth_user SET username = ?, password_hash = ?, salt = ?, updated_at = ?"
+                    "UPDATE auth_user SET username = ?, password_hash = ?, salt = ?, session_secret = ?, updated_at = ?"
                     " WHERE id = 1",
-                    (norm_username, pw_hash, salt, now),
+                    (norm_username, pw_hash, salt, session_secret, now),
                 )
                 return AuthUser(
                     username=norm_username,
@@ -1200,6 +1219,7 @@ class Library:
                     api_key=row["api_key"],
                     api_key_rotated=bool(row["api_key_rotated"]),
                     updated_at=now,
+                    session_secret=session_secret,
                 )
             return _row_to_auth_user(row)
 
@@ -1208,7 +1228,7 @@ class Library:
         if not norm_username or not password:
             return None
         user = self.get_auth_user()
-        if user is None:
+        if user is None or not user.password_hash or not user.salt:
             return None
         if not hmac.compare_digest(norm_username.encode("utf-8"), user.username.encode("utf-8")):
             return None
@@ -1216,6 +1236,21 @@ class Library:
         if not hmac.compare_digest(candidate.encode("utf-8"), user.password_hash.encode("utf-8")):
             return None
         return user
+
+    def create_initial_user(self, username: str, password: str) -> AuthUser:
+        """Create or update the initial auth user while preserving any existing API key."""
+        return self.update_credentials(username, password)
+
+    def reset_auth_password(self) -> None:
+        """Clear password credentials to re-enter setup while preserving API key and rotation state."""
+        session_secret = secrets.token_hex(32)
+        now = _now()
+        with self._lock, self._db:
+            self._db.execute(
+                "UPDATE auth_user SET password_hash = '', salt = '', session_secret = ?, updated_at = ?"
+                " WHERE id = 1",
+                (session_secret, now),
+            )
 
     def update_credentials(self, username: str, password: str) -> AuthUser:
         norm_username = username.strip().lower()
@@ -1225,6 +1260,7 @@ class Library:
             raise ValueError("Password must not be empty")
         salt = secrets.token_hex(16)
         pw_hash = hash_password(password, salt)
+        session_secret = secrets.token_hex(32)
         now = _now()
         with self._lock, self._db:
             row = self._db.execute(
@@ -1235,17 +1271,17 @@ class Library:
                 rotated = False
                 self._db.execute(
                     "INSERT INTO auth_user"
-                    " (id, username, password_hash, salt, api_key, api_key_rotated, updated_at)"
-                    " VALUES (1, ?, ?, ?, ?, 0, ?)",
-                    (norm_username, pw_hash, salt, api_key, now),
+                    " (id, username, password_hash, salt, api_key, api_key_rotated, session_secret, updated_at)"
+                    " VALUES (1, ?, ?, ?, ?, 0, ?, ?)",
+                    (norm_username, pw_hash, salt, api_key, session_secret, now),
                 )
             else:
                 api_key = row["api_key"]
                 rotated = bool(row["api_key_rotated"])
                 self._db.execute(
-                    "UPDATE auth_user SET username = ?, password_hash = ?, salt = ?, updated_at = ?"
+                    "UPDATE auth_user SET username = ?, password_hash = ?, salt = ?, session_secret = ?, updated_at = ?"
                     " WHERE id = 1",
-                    (norm_username, pw_hash, salt, now),
+                    (norm_username, pw_hash, salt, session_secret, now),
                 )
         return AuthUser(
             username=norm_username,
@@ -1254,6 +1290,7 @@ class Library:
             api_key=api_key,
             api_key_rotated=rotated,
             updated_at=now,
+            session_secret=session_secret,
         )
 
     def reset_api_key(self) -> str:

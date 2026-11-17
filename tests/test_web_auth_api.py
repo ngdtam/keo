@@ -104,8 +104,8 @@ def test_library_migrates_v6_to_v7_with_auth_user(tmp_path):
     con.close()
 
     lib = Library(db_path, tmp_path / "archive.txt")
-    assert LATEST_VERSION == 7
-    assert sqlite3.connect(db_path).execute("PRAGMA user_version").fetchone()[0] == 7
+    assert LATEST_VERSION >= 7
+    assert sqlite3.connect(db_path).execute("PRAGMA user_version").fetchone()[0] == LATEST_VERSION
     assert len(lib.list_songs()) == 1
     user = lib.ensure_auth_user("secret")
     assert user.username == "admin"
