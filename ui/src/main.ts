@@ -12,6 +12,7 @@ import OrganizePreviewPage from './pages/OrganizePreviewPage.vue'
 import ReviewPage from './pages/ReviewPage.vue'
 import SearchPage from './pages/SearchPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
+import SetupPage from './pages/SetupPage.vue'
 import SongDetailPage from './pages/SongDetailPage.vue'
 import TrashPage from './pages/TrashPage.vue'
 
@@ -19,6 +20,7 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', component: HomePage },
+    { path: '/setup', component: SetupPage },
     { path: '/login', component: LoginPage },
     { path: '/library', component: LibraryPage },
     { path: '/library/organize/preview', component: OrganizePreviewPage },

@@ -54,6 +54,10 @@ const confirmPassword = ref('')
 const confirmResetKey = ref(false)
 
 const cookieFile = ref<File | null>(null)
+const showYtmForm = ref(false)
+const ytmMode = ref<'headers' | 'file'>('headers')
+const ytmHeadersRaw = ref('')
+const ytmAuthFile = ref<File | null>(null)
 const notifyUrl = ref('')
 const mediaRefreshUrl = ref('')
 
@@ -117,6 +121,33 @@ async function uploadCookie() {
   if (!cookieFile.value) return
   await runPost('cookie-upload', '/settings/cookie', { cookie: cookieFile.value }, 'Cookie uploaded')
   cookieFile.value = null
+}
+
+function onYtmFileChange(ev: Event) {
+  const input = ev.target as HTMLInputElement
+  ytmAuthFile.value = input.files?.[0] ?? null
+}
+
+async function saveYtmAuth() {
+  if (ytmMode.value === 'headers' && !ytmHeadersRaw.value.trim()) return
+  if (ytmMode.value === 'file' && !ytmAuthFile.value) return
+  busy.value = 'ytm-auth'
+  try {
+    if (ytmMode.value === 'headers') {
+      await apiPostJson('/api/settings/ytm', { headers_raw: ytmHeadersRaw.value })
+    } else if (ytmAuthFile.value) {
+      await apiPostForm('/api/settings/ytm', { auth_file: ytmAuthFile.value })
+    }
+    ytmHeadersRaw.value = ''
+    ytmAuthFile.value = null
+    showYtmForm.value = false
+    toast.add({ title: 'YouTube Music connected', color: 'success' })
+    await loadSettings()
+  } catch (err) {
+    showError(err, 'Failed to update YouTube Music auth')
+  } finally {
+    busy.value = ''
+  }
 }
 
 async function saveCredentials() {
@@ -420,6 +451,95 @@ onMounted(loadSettings)
                     Check cookie now
                   </UButton>
                 </form>
+
+                <div class="border-t border-default pt-3 flex flex-col gap-3">
+                  <div>
+                    <UButton
+                      type="button"
+                      size="xs"
+                      color="neutral"
+                      variant="outline"
+                      :aria-expanded="showYtmForm"
+                      @click="showYtmForm = !showYtmForm"
+                    >
+                      Update YouTube Music auth
+                    </UButton>
+                  </div>
+
+                  <form
+                    v-if="showYtmForm"
+                    class="flex flex-col gap-3"
+                    @submit.prevent="saveYtmAuth"
+                  >
+                    <UFieldGroup>
+                      <UButton
+                        type="button"
+                        size="xs"
+                        :color="ytmMode === 'headers' ? 'primary' : 'neutral'"
+                        :variant="ytmMode === 'headers' ? 'solid' : 'outline'"
+                        @click="ytmMode = 'headers'"
+                      >
+                        Paste browser headers
+                      </UButton>
+                      <UButton
+                        type="button"
+                        size="xs"
+                        :color="ytmMode === 'file' ? 'primary' : 'neutral'"
+                        :variant="ytmMode === 'file' ? 'solid' : 'outline'"
+                        @click="ytmMode = 'file'"
+                      >
+                        Upload browser.json
+                      </UButton>
+                    </UFieldGroup>
+
+                    <div v-if="ytmMode === 'headers'" class="flex flex-col gap-2">
+                      <p class="text-xs text-muted leading-relaxed">
+                        Open music.youtube.com, open DevTools -&gt; Network tab, and click any <code>/browse</code> request while signed in.
+                        Copy the Request Headers containing <code>cookie</code>, <code>authorization</code>, and <code>x-goog-authuser</code>.
+                      </p>
+                      <UTextarea
+                        v-model="ytmHeadersRaw"
+                        :rows="5"
+                        placeholder="accept: */*&#10;authorization: SAPISIDHASH ...&#10;cookie: ...&#10;x-goog-authuser: 0"
+                        class="w-full font-mono text-xs"
+                      />
+                    </div>
+
+                    <div v-else class="flex flex-col gap-2">
+                      <input
+                        type="file"
+                        accept=".json,application/json"
+                        class="text-xs file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-elevated"
+                        @change="onYtmFileChange"
+                      />
+                    </div>
+
+                    <div class="flex flex-wrap items-center gap-2">
+                      <UButton
+                        type="submit"
+                        size="xs"
+                        color="primary"
+                        :loading="busy === 'ytm-auth'"
+                        :disabled="
+                          (ytmMode === 'headers' ? !ytmHeadersRaw.trim() : !ytmAuthFile) ||
+                          (busy !== '' && busy !== 'ytm-auth')
+                        "
+                      >
+                        Save YouTube Music auth
+                      </UButton>
+                      <UButton
+                        type="button"
+                        size="xs"
+                        color="neutral"
+                        variant="ghost"
+                        :disabled="busy === 'ytm-auth'"
+                        @click="showYtmForm = false"
+                      >
+                        Cancel
+                      </UButton>
+                    </div>
+                  </form>
+                </div>
               </div>
             </UCard>
 

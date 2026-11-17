@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { apiPostJson } from '../api'
+import { apiGet, apiPostJson } from '../api'
 
 const router = useRouter()
 const username = ref('admin')
@@ -10,6 +10,17 @@ const remember = ref(true)
 const showResetHelp = ref(false)
 const error = ref('')
 const loading = ref(false)
+
+onMounted(async () => {
+  try {
+    const status = await apiGet<{ needs_setup: boolean; ytm_configured: boolean }>('/api/auth/status')
+    if (status.needs_setup) {
+      await router.replace('/setup')
+    }
+  } catch {
+    // ignore status check errors on login page
+  }
+})
 
 async function onSubmit() {
   error.value = ''
@@ -76,7 +87,7 @@ async function onSubmit() {
           </UButton>
         </div>
         <p v-if="showResetHelp" class="text-xs text-muted">
-          Set KEO_RESET_PASSWORD=1 in .env, restart Kéo, and sign in with admin and your KEO_TOKEN. Remove KEO_RESET_PASSWORD=1 once you are back in.
+          Set KEO_RESET_PASSWORD=1 in .env, restart Kéo, and open /setup to set a new password (or sign in with KEO_TOKEN if set). Remove KEO_RESET_PASSWORD=1 once you are back in.
         </p>
         <UAlert v-if="error" color="error" variant="subtle" :description="error" />
       </form>

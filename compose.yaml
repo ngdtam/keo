@@ -6,7 +6,7 @@ services:
     ports:
       - "${KEO_PORT:-8000}:8000"
     environment:
-      KEO_TOKEN: ${KEO_TOKEN:?Set KEO_TOKEN in .env}
+      KEO_TOKEN: ${KEO_TOKEN:-}
       KEO_USERNAME: ${KEO_USERNAME:-admin}
       KEO_API_KEY: ${KEO_API_KEY:-}
       KEO_RESET_PASSWORD: ${KEO_RESET_PASSWORD:-}

@@ -18,7 +18,7 @@ const settingsWarn = ref(false)
 
 async function refreshSidebar() {
   await router.isReady()
-  if (route.path === '/login') return
+  if (route.path === '/login' || route.path === '/setup') return
   try {
     const data = await apiGet<SidebarDashboard>('/api/dashboard')
     reviewCount.value = data.nav_review_count ?? 0
@@ -80,7 +80,7 @@ async function signOut() {
 
 <template>
   <UApp>
-    <RouterView v-if="route.path === '/login'" />
+    <RouterView v-if="route.path === '/login' || route.path === '/setup'" />
 
     <UDashboardGroup v-else>
       <UDashboardSidebar collapsible resizable>
