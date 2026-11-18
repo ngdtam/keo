@@ -21,6 +21,9 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "httpx>=0.27"]
 
+[project.scripts]
+keo-reset-password = "keo.reset_password:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

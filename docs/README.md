@@ -31,14 +31,15 @@ A choice on the Settings page is saved into `keo.toml` and used on the next down
 
 # Resetting your password
 
-If you forget your username or password:
+If you forget your username or password, run this inside the folder with `compose.yaml`:
 
-1. Add `KEO_RESET_PASSWORD=1` to `.env`.
-2. Restart the container with `docker compose up -d`.
-3. If `KEO_TOKEN` is unset, open `/setup` in the browser to choose a new username and password. If `KEO_TOKEN` is set, sign in with `admin` (or `KEO_USERNAME`) and your `KEO_TOKEN`.
-4. Remove `KEO_RESET_PASSWORD=1` from `.env` and restart again so Kéo does not reset the password on the next boot.
+```bash
+docker compose exec keo keo-reset-password
+```
 
-Resetting your password leaves your library and API key untouched.
+Then refresh Kéo in your browser. If `KEO_TOKEN` is unset, `/setup` opens so you can pick a new username and password. If `KEO_TOKEN` is set, sign in with `admin` (or `KEO_USERNAME`) and your `KEO_TOKEN`.
+
+Your library and API key stay untouched.
 
 # Development
 

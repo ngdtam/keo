@@ -583,3 +583,24 @@ def test_ytm_oauth_requires_client_credentials_and_unconfigured_search_returns_5
         search_res = client.get("/api/search", params={"q": "test"})
         assert search_res.status_code == 502
         assert "not configured" in search_res.json()["detail"].lower()
+
+
+def test_reset_password_cli_helper(tmp_path):
+    from keo.reset_password import reset_password
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    lib = Library(data_dir / "keo.db", data_dir / "archive.txt")
+    user = lib.create_initial_user("tam", "secret123")
+    saved_key = user.api_key
+
+    msg_tokenless = reset_password(data_dir, token="")
+    assert "/setup" in msg_tokenless
+    assert lib.needs_setup() is True
+    assert lib.get_auth_user().api_key == saved_key
+
+    msg_token = reset_password(data_dir, token="preset-secret", username="admin")
+    assert "admin" in msg_token
+    assert lib.needs_setup() is False
+    assert lib.verify_user("admin", "preset-secret") is not None
+    assert lib.get_auth_user().api_key == saved_key

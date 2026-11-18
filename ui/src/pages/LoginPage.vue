@@ -7,7 +7,6 @@ const router = useRouter()
 const username = ref('admin')
 const password = ref('')
 const remember = ref(true)
-const showResetHelp = ref(false)
 const error = ref('')
 const loading = ref(false)
 
@@ -75,20 +74,15 @@ async function onSubmit() {
           Sign in
         </UButton>
         <div class="flex justify-center">
-          <UButton
-            type="button"
-            variant="link"
-            color="neutral"
-            size="xs"
-            :aria-expanded="showResetHelp"
-            @click="showResetHelp = !showResetHelp"
+          <a
+            href="https://github.com/ngdtam/keo/blob/main/docs/README.md#resetting-your-password"
+            target="_blank"
+            rel="noreferrer"
+            class="text-xs text-muted hover:underline"
           >
             Forgot password?
-          </UButton>
+          </a>
         </div>
-        <p v-if="showResetHelp" class="text-xs text-muted">
-          Set KEO_RESET_PASSWORD=1 in .env, restart Kéo, and open /setup to set a new password (or sign in with KEO_TOKEN if set). Remove KEO_RESET_PASSWORD=1 once you are back in.
-        </p>
         <UAlert v-if="error" color="error" variant="subtle" :description="error" />
       </form>
 
