@@ -33,6 +33,7 @@ interface LibraryResponse {
 }
 
 const COVER_SIZE_KEY = 'keo_cover_size'
+const VIEW_MODE_KEY = 'keo_library_view'
 const DEFAULT_COVER_SIZE = 160
 
 function readStoredCoverSize(): number {
@@ -59,6 +60,7 @@ const filter = ref(typeof route.query.filter === 'string' ? route.query.filter :
 const search = ref(typeof route.query.q === 'string' ? route.query.q : '')
 const sort = ref(typeof route.query.sort === 'string' ? route.query.sort : 'artist')
 const coverSize = ref(readStoredCoverSize())
+const viewMode = ref<'grid' | 'list'>(localStorage.getItem(VIEW_MODE_KEY) === 'list' ? 'list' : 'grid')
 
 const sortItems = [
   { label: 'Artist', value: 'artist' },
@@ -77,6 +79,10 @@ watch(coverSize, (val) => {
   localStorage.setItem(COVER_SIZE_KEY, String(val))
 })
 
+watch(viewMode, (val) => {
+  localStorage.setItem(VIEW_MODE_KEY, val)
+})
+
 function itemKey(row: Pick<LibraryRow, 'kind' | 'ident'>): string {
   return `${row.kind}:${row.ident}`
 }
@@ -93,6 +99,25 @@ function toggleSelected(row: LibraryRow, checked: boolean | 'indeterminate') {
     }
   } else {
     selected.value = selected.value.filter((item) => item !== key)
+  }
+}
+
+const allVisibleSelected = computed<boolean | 'indeterminate'>(() => {
+  const rows = data.value?.rows ?? []
+  if (rows.length === 0) return false
+  const count = rows.filter((r) => selected.value.includes(itemKey(r))).length
+  if (count === 0) return false
+  return count === rows.length ? true : 'indeterminate'
+})
+
+function toggleAllVisible(checked: boolean | 'indeterminate') {
+  const rows = data.value?.rows ?? []
+  const keys = rows.map(itemKey)
+  if (checked === true) {
+    selected.value = Array.from(new Set([...selected.value, ...keys]))
+  } else {
+    const keySet = new Set(keys)
+    selected.value = selected.value.filter((k) => !keySet.has(k))
   }
 }
 
@@ -308,10 +333,30 @@ onMounted(loadLibrary)
               class="w-28"
               @update:model-value="onSortChange"
             />
-            <div class="flex items-center gap-2 w-28" title="Cover size">
+            <div v-if="viewMode === 'grid'" class="flex items-center gap-2 w-28" title="Cover size">
               <UIcon name="i-lucide-grid-2x2" class="size-4 text-muted shrink-0" />
               <USlider v-model="coverSize" :min="96" :max="320" :step="8" size="sm" />
             </div>
+            <UFieldGroup size="sm">
+              <UButton
+                icon="i-lucide-layout-grid"
+                aria-label="Grid view"
+                :color="viewMode === 'grid' ? 'primary' : 'neutral'"
+                :variant="viewMode === 'grid' ? 'solid' : 'outline'"
+                @click="viewMode = 'grid'"
+              >
+                Grid
+              </UButton>
+              <UButton
+                icon="i-lucide-list"
+                aria-label="List view"
+                :color="viewMode === 'list' ? 'primary' : 'neutral'"
+                :variant="viewMode === 'list' ? 'solid' : 'outline'"
+                @click="viewMode = 'list'"
+              >
+                List
+              </UButton>
+            </UFieldGroup>
           </div>
         </template>
       </UDashboardToolbar>
@@ -329,7 +374,7 @@ onMounted(loadLibrary)
         </div>
 
         <div
-          v-if="data && data.rows.length > 0"
+          v-if="data && data.rows.length > 0 && viewMode === 'grid'"
           class="grid gap-4"
           :style="{
             '--cover': `${coverSize}px`,
@@ -385,6 +430,94 @@ onMounted(loadLibrary)
               <div class="h-1.5 w-full" :class="statusStripClass(row.color)" />
             </UTooltip>
           </div>
+        </div>
+
+        <div
+          v-else-if="data && data.rows.length > 0"
+          class="overflow-x-auto rounded-lg border border-default"
+        >
+          <table class="w-full text-left text-sm">
+            <thead class="border-b border-default bg-elevated/60 text-xs text-muted">
+              <tr>
+                <th class="w-9 px-3 py-2.5">
+                  <UCheckbox
+                    :model-value="allVisibleSelected"
+                    aria-label="Select all visible songs"
+                    @update:model-value="toggleAllVisible"
+                  />
+                </th>
+                <th class="px-3 py-2.5 font-medium">Song</th>
+                <th class="hidden md:table-cell px-3 py-2.5 font-medium">Quality</th>
+                <th class="hidden sm:table-cell px-3 py-2.5 font-medium">Size</th>
+                <th class="px-3 py-2.5 font-medium">Status</th>
+                <th class="w-24 px-3 py-2.5 text-right font-medium" />
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-default">
+              <tr
+                v-for="row in data.rows"
+                :key="itemKey(row)"
+                class="hover:bg-elevated/40"
+              >
+                <td class="px-3 py-2">
+                  <UCheckbox
+                    :model-value="isSelected(row)"
+                    :aria-label="`Select ${row.title}`"
+                    @update:model-value="toggleSelected(row, $event)"
+                  />
+                </td>
+                <td class="px-3 py-2 max-w-0 w-full">
+                  <div class="flex items-center gap-3 min-w-0">
+                    <RouterLink :to="row.href" class="size-10 shrink-0 overflow-hidden rounded bg-muted">
+                      <img
+                        v-if="row.cover"
+                        :src="row.cover"
+                        :alt="row.title"
+                        loading="lazy"
+                        class="h-full w-full object-cover"
+                      />
+                      <div v-else class="flex h-full w-full items-center justify-center text-muted">
+                        <UIcon name="i-lucide-music" class="size-4" />
+                      </div>
+                    </RouterLink>
+                    <div class="min-w-0 flex-1">
+                      <RouterLink :to="row.href" class="block truncate font-medium hover:underline">
+                        {{ row.title }}
+                      </RouterLink>
+                      <p class="truncate text-xs text-muted">{{ row.artist }}</p>
+                    </div>
+                  </div>
+                </td>
+                <td class="hidden md:table-cell px-3 py-2 text-xs text-muted whitespace-nowrap">
+                  {{ row.quality || '—' }}
+                </td>
+                <td class="hidden sm:table-cell px-3 py-2 text-xs text-muted whitespace-nowrap">
+                  {{ row.size_human || '—' }}
+                </td>
+                <td class="px-3 py-2 whitespace-nowrap">
+                  <UBadge
+                    :color="row.color === 'green' ? 'success' : row.color === 'yellow' ? 'warning' : 'error'"
+                    variant="subtle"
+                    size="xs"
+                  >
+                    {{ row.label }}
+                  </UBadge>
+                </td>
+                <td class="px-3 py-2 text-right whitespace-nowrap">
+                  <UButton
+                    v-if="row.color === 'red' && row.kind !== 'song'"
+                    size="xs"
+                    color="primary"
+                    variant="soft"
+                    :loading="downloadingKey === itemKey(row)"
+                    @click="downloadRow(row)"
+                  >
+                    Download
+                  </UButton>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
 
         <div
