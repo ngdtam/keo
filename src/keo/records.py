@@ -16,6 +16,10 @@ class SongRow:
     def primary_artist(self) -> str:
         return self.artists[0] if self.artists else ""
 
+    @property
+    def all_artists(self) -> str:
+        return ", ".join(self.artists)
+
 
 @dataclass(frozen=True)
 class PlaylistRef:

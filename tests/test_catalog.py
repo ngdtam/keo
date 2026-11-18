@@ -185,3 +185,22 @@ def test_unconfigured_catalog_raises_and_hot_reloads_with_use(ytm):
     catalog.use(ytm)
     assert catalog.is_configured() is True
     assert catalog.search("lac troi") == [SONG]
+
+
+def test_history_preserves_multiple_artists():
+    class MultiArtistYTMusic(FakeYTMusic):
+        def get_history(self):
+            return [
+                {
+                    "videoId": "vid_collab",
+                    "title": "Collab Song",
+                    "artists": [{"name": "Artist A", "id": "UCa"}, {"name": "Artist B", "id": "UCb"}],
+                    "album": None,
+                    "played": "Today",
+                }
+            ]
+
+    assert Catalog(MultiArtistYTMusic()).history() == [
+        HistoryItem("vid_collab", "Artist A, Artist B", "Collab Song", "Today")
+    ]
+

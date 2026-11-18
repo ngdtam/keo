@@ -85,3 +85,59 @@ def test_organize_library_renames_audio_and_lrc_sidecar(library, tmp_path):
     assert not lrc.exists()
     assert library.list_songs()[0].audio_path == str(target)
 
+
+def test_read_tags_and_organize_preserve_multiple_artists(library, tmp_path, monkeypatch):
+    import types
+    import mutagen
+    from keo.scan import organize_library, read_tags
+
+    music = tmp_path / "music"
+    music.mkdir()
+    audio = music / "Artist A, Artist B - Collab.mp3"
+    audio.write_bytes(b"audio")
+
+    fake_audio = types.SimpleNamespace(
+        tags={"artist": ["Artist A", "Artist B"], "title": ["Collab"]}
+    )
+    monkeypatch.setattr(mutagen, "File", lambda *a, **kw: fake_audio)
+
+    assert read_tags(audio) == ("Artist A, Artist B", "Collab")
+    scan(music, library, audio_loader=lambda p: None, cover_checker=lambda p: False)
+    assert library.list_songs()[0].artist == "Artist A, Artist B"
+    assert organize_library(music, library, "{artists} - {title}.{output-ext}") == 0
+    assert audio.is_file()
+
+
+def test_plan_organize_prefers_embedded_tags_over_stale_db_artist(library, tmp_path, monkeypatch):
+    import types
+    import mutagen
+    from keo.scan import plan_organize
+
+    music = tmp_path / "music"
+    music.mkdir()
+    audio = music / "Osad, Hà An Huy - Như Một Người Rưng.mp3"
+    audio.write_bytes(b"audio")
+    library.mark_owned("vid_osad", "OSAD", "Như Một Người Rưng", "sp_osad")
+    library.set_audio_path("vid_osad", str(audio))
+
+    fake_audio = types.SimpleNamespace(
+        tags={"artist": ["Osad", "Hà An Huy"], "title": ["Như Một Người Rưng"]}
+    )
+    monkeypatch.setattr(mutagen, "File", lambda *a, **kw: fake_audio)
+
+    assert plan_organize(music, library, "{artists} - {title}.{output-ext}") == []
+    planned = plan_organize(music, library, "{artists}/{title}.{output-ext}")
+    assert len(planned) == 1
+    assert planned[0][2] == music / "Osad, Hà An Huy" / "Như Một Người Rưng.mp3"
+
+    # When embedded tags are absent, fall back to DB artist/title rather than filename stem.
+    untagged = music / "wrong name - track.mp3"
+    untagged.write_bytes(b"audio")
+    library.mark_owned("vid_db", "Good Artist", "Good Title", "sp_db")
+    library.set_audio_path("vid_db", str(untagged))
+    monkeypatch.setattr(mutagen, "File", lambda *a, **kw: None)
+    planned_fallback = plan_organize(music, library, "{artists} - {title}.{output-ext}")
+    assert any(dst == music / "Good Artist - Good Title.mp3" for _, _, dst in planned_fallback)
+
+
+

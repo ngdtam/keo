@@ -18,24 +18,30 @@ class ScanResult:
     missing: int
 
 
-def read_tags(path: Path) -> tuple[str, str]:
-    """Read (artist, title) from audio tags, falling back to 'Artist - Title' filename."""
+def _read_embedded_tags(path: Path) -> tuple[str, str]:
+    """Read (artist, title) from embedded audio tags, returning empty strings if absent."""
     try:
         from mutagen import File
     except ImportError:
-        File = None
-    if File is not None:
-        try:
-            audio = File(path, easy=True)
-            if audio and getattr(audio, "tags", None):
-                artists = audio.tags.get("artist") or []
-                titles = audio.tags.get("title") or []
-                artist = str(artists[0]).strip() if artists else ""
-                title = str(titles[0]).strip() if titles else ""
-                if title:
-                    return artist, title
-        except Exception:
-            pass
+        return "", ""
+    try:
+        audio = File(path, easy=True)
+        if audio and getattr(audio, "tags", None):
+            artists = audio.tags.get("artist") or []
+            titles = audio.tags.get("title") or []
+            artist = ", ".join(a for a in (str(x).strip() for x in artists) if a)
+            title = str(titles[0]).strip() if titles else ""
+            return artist, title
+    except Exception:
+        pass
+    return "", ""
+
+
+def read_tags(path: Path) -> tuple[str, str]:
+    """Read (artist, title) from audio tags, falling back to 'Artist - Title' filename."""
+    artist, title = _read_embedded_tags(path)
+    if title:
+        return artist, title
     stem = path.stem
     if " - " in stem:
         artist, title = stem.split(" - ", 1)
@@ -142,8 +148,9 @@ def plan_organize(
         src = Path(song.audio_path)
         if not src.is_file() or not inside_music(music_dir, src):
             continue
+        tag_artist, tag_title = _read_embedded_tags(src)
         rel = format_output_template(
-            output_template, song.artist, song.title, max_length=max_length
+            output_template, tag_artist or song.artist, tag_title or song.title, max_length=max_length
         ).removesuffix(".%(ext)s")
         target = music_dir / f"{rel}{src.suffix}"
         if target == src or not inside_music(music_dir, target) or target.exists():

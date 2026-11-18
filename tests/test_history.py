@@ -344,3 +344,19 @@ def test_scheduler_skips_ytm_syncs_when_catalog_unconfigured(library, worker, sp
     assert library.last_pull() is None
     assert library.list_watched_playlists()[0].last_synced_at is None
     assert library.list_followed_artists()[0].last_synced_at is None
+
+
+def test_sync_watched_playlists_and_followed_artists_preserve_multiple_artists(catalog, library, worker):
+    from keo.history import sync_followed_artists, sync_watched_playlists
+    from keo.records import SongRow
+
+    catalog.songs = [SongRow("vid_collab_pl", "Collab", ("Artist A", "Artist B"), "Album")]
+    library.watch_playlist("PL_collab", "Collab List", auto_queue=False)
+    assert sync_watched_playlists(catalog=catalog, library=library, worker=worker) == 1
+    assert library.get_review("vid_collab_pl").heard_artist == "Artist A, Artist B"
+
+    catalog.songs = [SongRow("vid_collab_art", "Release", ("Artist A", "Artist B"), "Single")]
+    library.follow_artist("UCa", "Artist A")
+    assert sync_followed_artists(catalog=catalog, library=library) == 1
+    assert library.get_review("vid_collab_art").heard_artist == "Artist A, Artist B"
+

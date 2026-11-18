@@ -167,7 +167,7 @@ class Catalog:
             song = _song(item)
             if song is not None:
                 items.append(
-                    HistoryItem(song.video_id, song.primary_artist, song.title, item.get("played") or "")
+                    HistoryItem(song.video_id, song.all_artists, song.title, item.get("played") or "")
                 )
         return items
 

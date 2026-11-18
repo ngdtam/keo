@@ -200,17 +200,18 @@ def sync_watched_playlists(
             log.warning("Watched playlist %s sync failed: %s", wp.playlist_id, exc)
             continue
         for song in songs:
-            if library.is_owned(song.video_id, song.primary_artist, song.title):
+            artist = song.all_artists
+            if library.is_owned(song.video_id, artist, song.title):
                 continue
             if library.is_dismissed(song.video_id):
                 continue
             if library.active_job(song.video_id) is not None:
                 continue
             if wp.auto_queue:
-                if worker.submit(song.video_id, song.primary_artist, song.title, source="manual") is not None:
+                if worker.submit(song.video_id, artist, song.title, source="manual") is not None:
                     added += 1
             elif library.get_review(song.video_id) is None:
-                library.add_review(song.video_id, song.primary_artist, song.title, reason="pending")
+                library.add_review(song.video_id, artist, song.title, reason="pending")
                 added += 1
         library.set_watched_playlist_synced(wp.playlist_id, synced_at, title=title or wp.title)
     return added
@@ -235,14 +236,15 @@ def sync_followed_artists(
             log.warning("Followed artist %s sync failed: %s", fa.channel_id, exc)
             continue
         for song in songs:
-            if library.is_owned(song.video_id, song.primary_artist, song.title):
+            artist = song.all_artists
+            if library.is_owned(song.video_id, artist, song.title):
                 continue
             if library.is_dismissed(song.video_id):
                 continue
             if library.active_job(song.video_id) is not None:
                 continue
             if library.get_review(song.video_id) is None:
-                library.add_review(song.video_id, song.primary_artist, song.title, reason="pending")
+                library.add_review(song.video_id, artist, song.title, reason="pending")
                 added += 1
         library.set_followed_artist_synced(fa.channel_id, synced_at, name=name or fa.name)
     return added
