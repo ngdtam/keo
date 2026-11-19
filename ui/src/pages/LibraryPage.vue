@@ -9,6 +9,7 @@ interface LibraryRow {
   label: string
   artist: string
   title: string
+  album: string
   path: string
   size: number | null
   size_human: string
@@ -25,11 +26,34 @@ interface LibraryResponse {
   filter: string
   q: string
   sort: string
+  artist: string
   stats: string
   total_count: number
   missing_count: number
   upgradable_count: number
   unmatched_count: number
+  in_album_count: number
+  no_album_count: number
+}
+
+interface ArtistTrack {
+  video_id: string
+  title: string
+  artists: string
+  album: string
+  in_album: boolean
+  owned: boolean
+  active: boolean
+}
+
+interface ArtistCheckResponse {
+  found: boolean
+  artist: string
+  channel_id: string | null
+  total: number
+  owned_count: number
+  missing_count: number
+  tracks: ArtistTrack[]
 }
 
 const COVER_SIZE_KEY = 'keo_cover_size'
@@ -59,8 +83,18 @@ const selected = ref<string[]>([])
 const filter = ref(typeof route.query.filter === 'string' ? route.query.filter : 'all')
 const search = ref(typeof route.query.q === 'string' ? route.query.q : '')
 const sort = ref(typeof route.query.sort === 'string' ? route.query.sort : 'artist')
+const artistFilter = ref(typeof route.query.artist === 'string' ? route.query.artist : '')
 const coverSize = ref(readStoredCoverSize())
 const viewMode = ref<'grid' | 'list'>(localStorage.getItem(VIEW_MODE_KEY) === 'list' ? 'list' : 'grid')
+const checkingAlbumKey = ref('')
+
+const artistCheckOpen = ref(false)
+const artistCheckLoading = ref(false)
+const artistCheckError = ref('')
+const artistCheckQuery = ref('')
+const artistCheckData = ref<ArtistCheckResponse | null>(null)
+const artistCheckFilter = ref<'all' | 'missing' | 'owned'>('all')
+const queueingVideoId = ref('')
 
 const sortItems = [
   { label: 'Artist', value: 'artist' },
@@ -73,7 +107,16 @@ const filterButtons = computed(() => [
   { id: 'missing', label: `Missing (${data.value?.missing_count ?? 0})` },
   { id: 'upgradable', label: `Upgradable (${data.value?.upgradable_count ?? 0})` },
   { id: 'unmatched', label: `Unmatched (${data.value?.unmatched_count ?? 0})` },
+  { id: 'in_album', label: `In album (${data.value?.in_album_count ?? 0})` },
+  { id: 'no_album', label: `No album (${data.value?.no_album_count ?? 0})` },
 ])
+
+const filteredArtistTracks = computed(() => {
+  const tracks = artistCheckData.value?.tracks ?? []
+  if (artistCheckFilter.value === 'missing') return tracks.filter((t) => !t.owned)
+  if (artistCheckFilter.value === 'owned') return tracks.filter((t) => t.owned)
+  return tracks
+})
 
 watch(coverSize, (val) => {
   localStorage.setItem(COVER_SIZE_KEY, String(val))
@@ -127,6 +170,12 @@ function statusStripClass(color: LibraryRow['color']): string {
   return 'bg-error'
 }
 
+function sourceMeta(kind: LibraryRow['kind']): { label: string; color: 'success' | 'error' | 'neutral' } {
+  if (kind === 'spotify') return { label: 'Spotify', color: 'success' }
+  if (kind === 'video') return { label: 'YouTube', color: 'error' }
+  return { label: 'Local', color: 'neutral' }
+}
+
 function showError(err: unknown, fallback: string) {
   const message = err instanceof Error ? err.message : fallback
   toast.add({ title: message, color: 'error' })
@@ -140,6 +189,7 @@ async function loadLibrary() {
     if (filter.value && filter.value !== 'all') params.set('filter', filter.value)
     if (search.value.trim()) params.set('q', search.value.trim())
     if (sort.value && sort.value !== 'artist') params.set('sort', sort.value)
+    if (artistFilter.value.trim()) params.set('artist', artistFilter.value.trim())
     const qs = params.toString()
     data.value = await apiGet<LibraryResponse>(`/api/library${qs ? `?${qs}` : ''}`)
   } catch (err) {
@@ -154,8 +204,81 @@ async function syncQueryAndReload() {
   if (filter.value && filter.value !== 'all') query.filter = filter.value
   if (search.value.trim()) query.q = search.value.trim()
   if (sort.value && sort.value !== 'artist') query.sort = sort.value
+  if (artistFilter.value.trim()) query.artist = artistFilter.value.trim()
   await router.replace({ query })
   await loadLibrary()
+}
+
+function primaryArtistName(artist: string): string {
+  const first = artist.split(',')[0]?.trim()
+  return first || artist.trim()
+}
+
+function filterByArtist(artist: string) {
+  artistFilter.value = primaryArtistName(artist)
+  void syncQueryAndReload()
+}
+
+function clearArtistFilter() {
+  artistFilter.value = ''
+  void syncQueryAndReload()
+}
+
+async function openArtistCheck(artist: string) {
+  const target = primaryArtistName(artist)
+  if (!target) return
+  artistCheckQuery.value = target
+  artistCheckOpen.value = true
+  artistCheckLoading.value = true
+  artistCheckError.value = ''
+  artistCheckData.value = null
+  artistCheckFilter.value = 'all'
+  try {
+    const params = new URLSearchParams({ artist: target })
+    artistCheckData.value = await apiGet<ArtistCheckResponse>(`/api/library/artist-check?${params}`)
+  } catch (err) {
+    artistCheckError.value = err instanceof Error ? err.message : 'Failed to check artist releases'
+  } finally {
+    artistCheckLoading.value = false
+  }
+}
+
+async function queueArtistTrack(track: ArtistTrack) {
+  queueingVideoId.value = track.video_id
+  try {
+    await apiPostJson('/api/downloads', {
+      video_id: track.video_id,
+      title: track.title,
+      artists: [track.artists],
+    })
+    track.active = true
+    toast.add({ title: `Queued ${track.title}`, color: 'success' })
+  } catch (err) {
+    showError(err, 'Failed to queue song')
+  } finally {
+    queueingVideoId.value = ''
+  }
+}
+
+async function checkRowAlbum(row: LibraryRow) {
+  const key = itemKey(row)
+  checkingAlbumKey.value = key
+  try {
+    const res = await apiPostJson<{ found: boolean; album: string }>(
+      `/api/library/${row.kind}/${row.ident}/check-album`,
+    )
+    if (res.found && res.album) {
+      row.album = res.album
+      toast.add({ title: `Album: ${res.album}`, color: 'success' })
+      await loadLibrary()
+    } else {
+      toast.add({ title: `No album found for ${row.title}`, color: 'neutral' })
+    }
+  } catch (err) {
+    showError(err, 'Album check failed')
+  } finally {
+    checkingAlbumKey.value = ''
+  }
 }
 
 function setFilter(next: string) {
@@ -321,7 +444,7 @@ onMounted(loadLibrary)
           <div class="flex flex-wrap items-center gap-3">
             <UInput
               v-model="search"
-              placeholder="Search artist or title..."
+              placeholder="Search artist, title, or album..."
               icon="i-lucide-search"
               size="sm"
               @update:model-value="onSearchInput"
@@ -367,6 +490,36 @@ onMounted(loadLibrary)
         <UAlert v-if="error" color="error" variant="subtle" :description="error" />
 
         <div
+          v-if="artistFilter"
+          class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-default bg-elevated/50 px-3 py-2 text-sm"
+        >
+          <div class="flex items-center gap-2">
+            <UIcon name="i-lucide-user" class="size-4 text-primary" />
+            <span>Artist: <strong>{{ artistFilter }}</strong></span>
+          </div>
+          <div class="flex items-center gap-2">
+            <UButton
+              size="xs"
+              color="primary"
+              variant="soft"
+              icon="i-lucide-disc-3"
+              @click="openArtistCheck(artistFilter)"
+            >
+              Check artist on YouTube Music
+            </UButton>
+            <UButton
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              icon="i-lucide-x"
+              @click="clearArtistFilter"
+            >
+              Clear
+            </UButton>
+          </div>
+        </div>
+
+        <div
           v-if="data && data.rows.length === 0 && !loading"
           class="py-12 text-center text-sm text-muted"
         >
@@ -394,6 +547,26 @@ onMounted(loadLibrary)
               />
             </div>
 
+            <div class="absolute top-2 right-2 z-10">
+              <UTooltip :text="sourceMeta(row.kind).label">
+                <UBadge
+                  :color="sourceMeta(row.kind).color"
+                  variant="subtle"
+                  size="xs"
+                  :aria-label="sourceMeta(row.kind).label"
+                  class="px-1.5 py-1 bg-default/85 backdrop-blur-xs"
+                >
+                  <svg v-if="row.kind === 'spotify'" viewBox="0 0 24 24" class="size-3.5 shrink-0 fill-current" aria-hidden="true">
+                    <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm4.59 14.42a.62.62 0 0 1-.86.2c-2.35-1.44-5.31-1.76-8.8-.96a.62.62 0 1 1-.28-1.22c3.82-.87 7.1-.5 9.74 1.12.3.18.39.56.2.86Zm1.22-2.72a.78.78 0 0 1-1.07.26c-2.69-1.65-6.79-2.13-9.97-1.16a.78.78 0 1 1-.46-1.5c3.63-1.1 8.15-.57 11.24 1.33.37.22.48.7.26 1.07Zm.11-2.83c-3.22-1.91-8.54-2.09-11.62-1.15a.94.94 0 0 1-.54-1.8c3.53-1.07 9.4-.87 13.11 1.34a.94.94 0 0 1-.95 1.61Z" />
+                  </svg>
+                  <svg v-else-if="row.kind === 'video'" viewBox="0 0 24 24" class="size-3.5 shrink-0 fill-current" aria-hidden="true">
+                    <path d="M21.58 7.19a2.75 2.75 0 0 0-1.94-1.95C17.93 4.78 12 4.78 12 4.78s-5.93 0-7.64.46A2.75 2.75 0 0 0 2.42 7.2 28.6 28.6 0 0 0 1.96 12a28.6 28.6 0 0 0 .46 4.81 2.75 2.75 0 0 0 1.94 1.95c1.71.46 7.64.46 7.64.46s5.93 0 7.64-.46a2.75 2.75 0 0 0 1.94-1.95A28.6 28.6 0 0 0 22.04 12a28.6 28.6 0 0 0-.46-4.81ZM9.98 15.02V8.98L15.22 12l-5.24 3.02Z" />
+                  </svg>
+                  <UIcon v-else name="i-lucide-hard-drive" class="size-3.5 shrink-0" />
+                </UBadge>
+              </UTooltip>
+            </div>
+
             <RouterLink :to="row.href" class="block aspect-square w-full overflow-hidden bg-muted">
               <img
                 v-if="row.cover"
@@ -411,19 +584,49 @@ onMounted(loadLibrary)
               <RouterLink :to="row.href" class="truncate text-sm font-medium hover:underline">
                 {{ row.title }}
               </RouterLink>
-              <p class="truncate text-xs text-muted">{{ row.artist }}</p>
-              <p v-if="row.quality" class="truncate text-[11px] text-muted">{{ row.quality }}</p>
-              <UButton
-                v-if="row.color === 'red' && row.kind !== 'song'"
-                size="xs"
-                color="primary"
-                variant="soft"
-                class="mt-auto self-start"
-                :loading="downloadingKey === itemKey(row)"
-                @click="downloadRow(row)"
+              <button
+                type="button"
+                class="truncate text-left text-xs text-muted hover:text-highlighted hover:underline"
+                :title="`Filter library by ${row.artist}`"
+                @click="filterByArtist(row.artist)"
               >
-                Download
-              </UButton>
+                {{ row.artist }}
+              </button>
+              <p class="truncate text-[11px] text-muted">
+                <span v-if="row.album">Album: {{ row.album }}</span>
+                <span v-else class="italic">No album</span>
+              </p>
+              <p v-if="row.quality" class="truncate text-[11px] text-muted">{{ row.quality }}</p>
+              <div class="mt-auto flex flex-wrap items-center gap-1 pt-1">
+                <UButton
+                  v-if="row.color === 'red' && row.kind !== 'song'"
+                  size="xs"
+                  color="primary"
+                  variant="soft"
+                  :loading="downloadingKey === itemKey(row)"
+                  @click="downloadRow(row)"
+                >
+                  Download
+                </UButton>
+                <UButton
+                  v-if="!row.album"
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  :loading="checkingAlbumKey === itemKey(row)"
+                  @click="checkRowAlbum(row)"
+                >
+                  Check album
+                </UButton>
+                <UButton
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  @click="openArtistCheck(row.artist)"
+                >
+                  Artist
+                </UButton>
+              </div>
             </div>
 
             <UTooltip :text="row.label">
@@ -447,10 +650,12 @@ onMounted(loadLibrary)
                   />
                 </th>
                 <th class="px-3 py-2.5 font-medium">Song</th>
+                <th class="hidden lg:table-cell px-3 py-2.5 font-medium">Album</th>
                 <th class="hidden md:table-cell px-3 py-2.5 font-medium">Quality</th>
                 <th class="hidden sm:table-cell px-3 py-2.5 font-medium">Size</th>
+                <th class="hidden sm:table-cell px-3 py-2.5 font-medium">Source</th>
                 <th class="px-3 py-2.5 font-medium">Status</th>
-                <th class="w-24 px-3 py-2.5 text-right font-medium" />
+                <th class="w-40 px-3 py-2.5 text-right font-medium" />
               </tr>
             </thead>
             <tbody class="divide-y divide-default">
@@ -484,8 +689,30 @@ onMounted(loadLibrary)
                       <RouterLink :to="row.href" class="block truncate font-medium hover:underline">
                         {{ row.title }}
                       </RouterLink>
-                      <p class="truncate text-xs text-muted">{{ row.artist }}</p>
+                      <button
+                        type="button"
+                        class="block max-w-full truncate text-left text-xs text-muted hover:text-highlighted hover:underline"
+                        :title="`Filter library by ${row.artist}`"
+                        @click="filterByArtist(row.artist)"
+                      >
+                        {{ row.artist }}
+                      </button>
                     </div>
+                  </div>
+                </td>
+                <td class="hidden lg:table-cell px-3 py-2 text-xs text-muted max-w-48">
+                  <span v-if="row.album" class="block truncate" :title="row.album">{{ row.album }}</span>
+                  <div v-else class="flex items-center gap-1.5">
+                    <UBadge color="neutral" variant="subtle" size="xs">No album</UBadge>
+                    <UButton
+                      size="xs"
+                      color="neutral"
+                      variant="ghost"
+                      :loading="checkingAlbumKey === itemKey(row)"
+                      @click="checkRowAlbum(row)"
+                    >
+                      Check
+                    </UButton>
                   </div>
                 </td>
                 <td class="hidden md:table-cell px-3 py-2 text-xs text-muted whitespace-nowrap">
@@ -493,6 +720,25 @@ onMounted(loadLibrary)
                 </td>
                 <td class="hidden sm:table-cell px-3 py-2 text-xs text-muted whitespace-nowrap">
                   {{ row.size_human || '—' }}
+                </td>
+                <td class="hidden sm:table-cell px-3 py-2 whitespace-nowrap">
+                  <UTooltip :text="sourceMeta(row.kind).label">
+                    <UBadge
+                      :color="sourceMeta(row.kind).color"
+                      variant="subtle"
+                      size="xs"
+                      :aria-label="sourceMeta(row.kind).label"
+                      class="px-1.5 py-1"
+                    >
+                      <svg v-if="row.kind === 'spotify'" viewBox="0 0 24 24" class="size-3.5 shrink-0 fill-current" aria-hidden="true">
+                        <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm4.59 14.42a.62.62 0 0 1-.86.2c-2.35-1.44-5.31-1.76-8.8-.96a.62.62 0 1 1-.28-1.22c3.82-.87 7.1-.5 9.74 1.12.3.18.39.56.2.86Zm1.22-2.72a.78.78 0 0 1-1.07.26c-2.69-1.65-6.79-2.13-9.97-1.16a.78.78 0 1 1-.46-1.5c3.63-1.1 8.15-.57 11.24 1.33.37.22.48.7.26 1.07Zm.11-2.83c-3.22-1.91-8.54-2.09-11.62-1.15a.94.94 0 0 1-.54-1.8c3.53-1.07 9.4-.87 13.11 1.34a.94.94 0 0 1-.95 1.61Z" />
+                      </svg>
+                      <svg v-else-if="row.kind === 'video'" viewBox="0 0 24 24" class="size-3.5 shrink-0 fill-current" aria-hidden="true">
+                        <path d="M21.58 7.19a2.75 2.75 0 0 0-1.94-1.95C17.93 4.78 12 4.78 12 4.78s-5.93 0-7.64.46A2.75 2.75 0 0 0 2.42 7.2 28.6 28.6 0 0 0 1.96 12a28.6 28.6 0 0 0 .46 4.81 2.75 2.75 0 0 0 1.94 1.95c1.71.46 7.64.46 7.64.46s5.93 0 7.64-.46a2.75 2.75 0 0 0 1.94-1.95A28.6 28.6 0 0 0 22.04 12a28.6 28.6 0 0 0-.46-4.81ZM9.98 15.02V8.98L15.22 12l-5.24 3.02Z" />
+                      </svg>
+                      <UIcon v-else name="i-lucide-hard-drive" class="size-3.5 shrink-0" />
+                    </UBadge>
+                  </UTooltip>
                 </td>
                 <td class="px-3 py-2 whitespace-nowrap">
                   <UBadge
@@ -504,16 +750,26 @@ onMounted(loadLibrary)
                   </UBadge>
                 </td>
                 <td class="px-3 py-2 text-right whitespace-nowrap">
-                  <UButton
-                    v-if="row.color === 'red' && row.kind !== 'song'"
-                    size="xs"
-                    color="primary"
-                    variant="soft"
-                    :loading="downloadingKey === itemKey(row)"
-                    @click="downloadRow(row)"
-                  >
-                    Download
-                  </UButton>
+                  <div class="inline-flex items-center gap-1">
+                    <UButton
+                      size="xs"
+                      color="neutral"
+                      variant="ghost"
+                      @click="openArtistCheck(row.artist)"
+                    >
+                      Artist
+                    </UButton>
+                    <UButton
+                      v-if="row.color === 'red' && row.kind !== 'song'"
+                      size="xs"
+                      color="primary"
+                      variant="soft"
+                      :loading="downloadingKey === itemKey(row)"
+                      @click="downloadRow(row)"
+                    >
+                      Download
+                    </UButton>
+                  </div>
                 </td>
               </tr>
             </tbody>
@@ -563,6 +819,92 @@ onMounted(loadLibrary)
             Queued or running
           </span>
         </div>
+        <UModal
+          v-model:open="artistCheckOpen"
+          :title="artistCheckData ? `${artistCheckData.artist} on YouTube Music` : `Checking ${artistCheckQuery}`"
+          :ui="{ content: 'sm:max-w-2xl' }"
+        >
+          <template #body>
+            <div class="flex flex-col gap-3">
+              <UAlert v-if="artistCheckError" color="error" variant="subtle" :description="artistCheckError" />
+              <div v-else-if="artistCheckLoading" class="py-8 text-center text-sm text-muted">
+                Loading artist releases from YouTube Music...
+              </div>
+              <div v-else-if="artistCheckData && !artistCheckData.found" class="py-6 text-center text-sm text-muted">
+                Artist "{{ artistCheckData.artist }}" was not found on YouTube Music.
+              </div>
+              <template v-else-if="artistCheckData">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <p class="text-xs text-muted">
+                    {{ artistCheckData.owned_count }} owned · {{ artistCheckData.missing_count }} missing ({{ artistCheckData.total }} total)
+                  </p>
+                  <UFieldGroup size="xs">
+                    <UButton
+                      :color="artistCheckFilter === 'all' ? 'primary' : 'neutral'"
+                      :variant="artistCheckFilter === 'all' ? 'solid' : 'outline'"
+                      @click="artistCheckFilter = 'all'"
+                    >
+                      All ({{ artistCheckData.total }})
+                    </UButton>
+                    <UButton
+                      :color="artistCheckFilter === 'missing' ? 'primary' : 'neutral'"
+                      :variant="artistCheckFilter === 'missing' ? 'solid' : 'outline'"
+                      @click="artistCheckFilter = 'missing'"
+                    >
+                      Missing ({{ artistCheckData.missing_count }})
+                    </UButton>
+                    <UButton
+                      :color="artistCheckFilter === 'owned' ? 'primary' : 'neutral'"
+                      :variant="artistCheckFilter === 'owned' ? 'solid' : 'outline'"
+                      @click="artistCheckFilter = 'owned'"
+                    >
+                      Owned ({{ artistCheckData.owned_count }})
+                    </UButton>
+                  </UFieldGroup>
+                </div>
+
+                <div class="max-h-96 divide-y divide-default overflow-y-auto rounded-lg border border-default">
+                  <div
+                    v-if="filteredArtistTracks.length === 0"
+                    class="py-6 text-center text-sm text-muted"
+                  >
+                    No tracks in this filter.
+                  </div>
+                  <div
+                    v-for="track in filteredArtistTracks"
+                    :key="track.video_id"
+                    class="flex items-center justify-between gap-3 px-3 py-2 text-sm"
+                  >
+                    <div class="min-w-0 flex-1">
+                      <p class="truncate font-medium">{{ track.title }}</p>
+                      <p class="truncate text-xs text-muted">
+                        {{ track.artists }} ·
+                        <span v-if="track.in_album">Album: {{ track.album }}</span>
+                        <span v-else class="italic">No album / single</span>
+                      </p>
+                    </div>
+                    <UBadge v-if="track.owned" color="success" variant="subtle" size="xs">
+                      Owned
+                    </UBadge>
+                    <UBadge v-else-if="track.active" color="warning" variant="subtle" size="xs">
+                      Queued
+                    </UBadge>
+                    <UButton
+                      v-else
+                      size="xs"
+                      color="primary"
+                      variant="soft"
+                      :loading="queueingVideoId === track.video_id"
+                      @click="queueArtistTrack(track)"
+                    >
+                      Queue
+                    </UButton>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+        </UModal>
       </div>
     </template>
   </UDashboardPanel>

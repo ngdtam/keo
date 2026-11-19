@@ -291,3 +291,21 @@ def test_worker_backoff_pauses_on_rate_limit_and_resets_on_success(library, spot
     assert w.backoff_status()["active"] is False
     assert w.backoff_status()["failures"] == 0
 
+
+def test_worker_derives_spotify_url_from_spotify_id_without_youtube_fallback(library, spotdl, cookies):
+    yt_calls = []
+    w = Worker(
+        library,
+        spotdl,
+        cookies=cookies,
+        youtube_runner=lambda *a, **kw: yt_calls.append(a),
+    )
+    job = w.submit("v_sp", "Artist A, Artist B", "Collab", spotify_id="sp123456")
+    assert job is not None
+    assert w.run_once() is True
+    assert spotdl.lookups == []
+    assert spotdl.downloads == ["https://open.spotify.com/track/sp123456"]
+    assert yt_calls == []
+    assert library.get_song_by_identifier("spotify", "sp123456") is not None
+
+

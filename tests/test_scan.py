@@ -140,4 +140,89 @@ def test_plan_organize_prefers_embedded_tags_over_stale_db_artist(library, tmp_p
     assert any(dst == music / "Good Artist - Good Title.mp3" for _, _, dst in planned_fallback)
 
 
+def test_scan_reads_and_backfills_album_tag(library, tmp_path, monkeypatch):
+    import types
+    import mutagen
+
+    music = tmp_path / "music"
+    music.mkdir()
+    audio = music / "Low G - An Thần.mp3"
+    audio.write_bytes(b"audio")
+
+    # Initial scan without album tag
+    monkeypatch.setattr(
+        mutagen,
+        "File",
+        lambda *a, **kw: types.SimpleNamespace(tags={"artist": ["Low G"], "title": ["An Thần"]}),
+    )
+    scan(music, library, audio_loader=lambda p: None, cover_checker=lambda p: False)
+    assert library.list_songs()[0].album is None
+
+    # Re-scan with same mtime once album tag exists backfills album
+    monkeypatch.setattr(
+        mutagen,
+        "File",
+        lambda *a, **kw: types.SimpleNamespace(
+            tags={"artist": ["Low G"], "title": ["An Thần"], "album": ["Tán Gái"]}
+        ),
+    )
+    scan(music, library, audio_loader=lambda p: None, cover_checker=lambda p: False)
+    assert library.list_songs()[0].album == "Tán Gái"
+
+
+def test_refresh_and_scan_sync_spotify_song_metadata_from_embedded_tags(library, tmp_path, monkeypatch):
+    import types
+    import mutagen
+    from keo.scan import refresh_song_cache
+
+    music = tmp_path / "music"
+    music.mkdir()
+    audio = music / "Osad, Hà An Huy - Như Một Người Rưng.mp3"
+    audio.write_bytes(b"audio")
+    library.mark_owned("vid_osad", "OSAD", "Như Một Người Rưng (feat. Hà An Huy)", "sp_osad")
+    library.set_audio_path("vid_osad", str(audio))
+
+    monkeypatch.setattr(
+        mutagen,
+        "File",
+        lambda *a, **kw: types.SimpleNamespace(
+            tags={
+                "artist": ["Osad", "Hà An Huy"],
+                "title": ["Như Một Người Rưng"],
+                "album": ["Single"],
+            }
+        ),
+    )
+    refresh_song_cache(library, "spotify", "sp_osad", audio, audio_loader=lambda p: None, cover_checker=lambda p: False)
+    updated = library.get_song_by_identifier("spotify", "sp_osad")
+    assert updated.artist == "Osad, Hà An Huy"
+    assert updated.title == "Như Một Người Rưng"
+    assert updated.album == "Single"
+
+
+def test_scan_recovers_spotify_id_from_woas_tag(library, tmp_path, monkeypatch):
+    import types
+    import mutagen
+
+    music = tmp_path / "music"
+    music.mkdir()
+    audio = music / "Artist - Track.mp3"
+    audio.write_bytes(b"audio")
+
+    def fake_file(path, easy=False):
+        if easy:
+            return types.SimpleNamespace(tags={"artist": ["Artist"], "title": ["Track"]})
+        return types.SimpleNamespace(
+            tags={"WOAS": types.SimpleNamespace(url="https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC")}
+        )
+
+    monkeypatch.setattr(mutagen, "File", fake_file)
+    scan(music, library, audio_loader=lambda p: None, cover_checker=lambda p: False)
+    song = library.list_songs()[0]
+    assert song.spotify_id == "4uLU6hMCjMI75M1A2tKUQC"
+
+
+
+
+
 

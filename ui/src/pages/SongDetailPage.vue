@@ -17,6 +17,8 @@ interface SongView {
   ident: string
   cover: string
   kind: 'spotify' | 'video' | 'song'
+  spotify_id?: string
+  video_id?: string
   quality: string
   details: [string, string][]
 }
@@ -251,8 +253,8 @@ onMounted(() => {
 
               <div class="mt-2 flex flex-wrap items-center gap-2">
                 <UButton
-                  v-if="data.song.kind === 'video'"
-                  :to="`/songs/${data.song.ident}/radio`"
+                  v-if="data.song.video_id || data.song.kind === 'video'"
+                  :to="`/songs/${data.song.video_id || data.song.ident}/radio`"
                   variant="outline"
                   color="neutral"
                   size="sm"
@@ -309,13 +311,13 @@ onMounted(() => {
                 <dt class="text-muted">Path</dt>
                 <dd class="break-all font-mono text-xs">{{ data.song.path }}</dd>
               </template>
-              <template v-if="data.song.kind === 'spotify'">
+              <template v-if="data.song.spotify_id || data.song.kind === 'spotify'">
                 <dt class="text-muted">Spotify ID</dt>
-                <dd class="font-mono text-xs">{{ data.song.ident }}</dd>
+                <dd class="font-mono text-xs">{{ data.song.spotify_id || data.song.ident }}</dd>
               </template>
-              <template v-else-if="data.song.kind === 'video'">
+              <template v-if="data.song.video_id || data.song.kind === 'video'">
                 <dt class="text-muted">Video ID</dt>
-                <dd class="font-mono text-xs">{{ data.song.ident }}</dd>
+                <dd class="font-mono text-xs">{{ data.song.video_id || data.song.ident }}</dd>
               </template>
             </dl>
           </UCard>

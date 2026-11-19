@@ -130,8 +130,10 @@ def test_library_migrates_v7_to_v8_adds_session_secret(tmp_path):
     con.close()
 
     lib = Library(db_path, tmp_path / "archive.txt")
-    assert LATEST_VERSION == 8
-    assert sqlite3.connect(db_path).execute("PRAGMA user_version").fetchone()[0] == 8
+    assert LATEST_VERSION == 9
+    assert sqlite3.connect(db_path).execute("PRAGMA user_version").fetchone()[0] == LATEST_VERSION
+    song_cols = {r[1] for r in sqlite3.connect(db_path).execute("PRAGMA table_info(songs)")}
+    assert "album" in song_cols
     user = lib.get_auth_user()
     assert user is not None
     assert user.username == "admin"

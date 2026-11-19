@@ -172,6 +172,8 @@ class Worker:
             return
 
         url, spotify_id = job.spotify_url, job.spotify_id
+        if url is None and spotify_id:
+            url = f"https://open.spotify.com/track/{spotify_id}"
         if url is None:
             lookup = self._spotdl.lookup(f"{job.artist} - {job.title}")
             cand = lookup.candidate

@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS songs (
     audio_card TEXT,
     audio_details TEXT,
     has_cover INTEGER,
+    album TEXT,
     UNIQUE (artist_key, title_key)
 );
 CREATE TABLE IF NOT EXISTS jobs (
@@ -173,6 +174,7 @@ class Song:
     audio_card: str | None = None
     audio_details: tuple[tuple[str, str], ...] = ()
     has_cover: bool | None = None
+    album: str | None = None
 
 
 @dataclass(frozen=True)
@@ -322,7 +324,7 @@ def _artist_in_filename(artist: str, audio_path: str) -> bool:
     return bool(artist_norm) and (artist_norm in filename_norm or f" {artist_norm} " in f" {filename_norm} ")
 
 
-LATEST_VERSION = 8
+LATEST_VERSION = 9
 
 
 def _row_to_song(row: sqlite3.Row) -> Song:
@@ -348,6 +350,7 @@ def _row_to_song(row: sqlite3.Row) -> Song:
         audio_card=row["audio_card"],
         audio_details=details,
         has_cover=None if raw_cover is None else bool(raw_cover),
+        album=row["album"],
     )
 
 
@@ -448,6 +451,12 @@ class Library:
                         "ALTER TABLE auth_user ADD COLUMN session_secret TEXT NOT NULL DEFAULT ''"
                     )
                 self._db.execute("PRAGMA user_version = 8")
+        if version < 9:
+            song_columns = {row[1] for row in self._db.execute("PRAGMA table_info(songs)")}
+            with self._db:
+                if "album" not in song_columns:
+                    self._db.execute("ALTER TABLE songs ADD COLUMN album TEXT")
+                self._db.execute("PRAGMA user_version = 9")
 
     def _accept_close_match_review(self) -> None:
         row = self._db.execute(
@@ -720,13 +729,66 @@ class Library:
         card: str | None,
         details: tuple[tuple[str, str], ...],
         has_cover: bool,
+        album: str | None = None,
     ) -> None:
+        clean_album = album.strip() if album and album.strip() else None
         with self._lock, self._db:
             self._db.execute(
                 "UPDATE songs SET audio_path = ?, audio_mtime = ?, audio_size = ?,"
-                " audio_card = ?, audio_details = ?, has_cover = ? WHERE id = ?",
-                (audio_path, mtime, size, card, json.dumps(details), int(has_cover), song_id),
+                " audio_card = ?, audio_details = ?, has_cover = ?,"
+                " album = COALESCE(?, album) WHERE id = ?",
+                (audio_path, mtime, size, card, json.dumps(details), int(has_cover), clean_album, song_id),
             )
+
+    def set_song_album(self, song_id: int, album: str) -> None:
+        clean = album.strip()
+        if not clean:
+            return
+        with self._lock, self._db:
+            self._db.execute(
+                "UPDATE songs SET album = ? WHERE id = ?",
+                (clean, song_id),
+            )
+
+    def set_song_spotify_id(self, song_id: int, spotify_id: str) -> None:
+        clean = spotify_id.strip()
+        if not clean:
+            return
+        with self._lock, self._db:
+            try:
+                self._db.execute(
+                    "UPDATE songs SET spotify_id = ? WHERE id = ? AND spotify_id IS NULL",
+                    (clean, song_id),
+                )
+            except sqlite3.IntegrityError:
+                pass
+
+    def sync_song_metadata(
+        self,
+        song_id: int,
+        *,
+        artist: str | None = None,
+        title: str | None = None,
+    ) -> None:
+        clean_artist = artist.strip() if artist and artist.strip() else None
+        clean_title = title.strip() if title and title.strip() else None
+        if not clean_artist and not clean_title:
+            return
+        with self._lock, self._db:
+            row = self._db.execute("SELECT artist, title FROM songs WHERE id = ?", (song_id,)).fetchone()
+            if row is None:
+                return
+            next_artist = clean_artist or row["artist"]
+            next_title = clean_title or row["title"]
+            if next_artist == row["artist"] and next_title == row["title"]:
+                return
+            try:
+                self._db.execute(
+                    "UPDATE songs SET artist = ?, title = ?, artist_key = ?, title_key = ? WHERE id = ?",
+                    (next_artist, next_title, normalize(next_artist), normalize(next_title), song_id),
+                )
+            except sqlite3.IntegrityError:
+                pass
 
     def set_song_audio_path(self, song_id: int, audio_path: str) -> None:
         with self._lock, self._db:

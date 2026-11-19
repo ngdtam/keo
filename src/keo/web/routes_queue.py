@@ -52,7 +52,7 @@ def queued(job: Job | None) -> dict:
 def api_download(request: Request, body: DownloadRequest):
     services = get_services(request)
     require_download(services)
-    artist = body.artists[0] if body.artists else ""
+    artist = ", ".join(a for a in body.artists if a)
     return queued(services.worker.submit(body.video_id, artist, body.title))
 
 

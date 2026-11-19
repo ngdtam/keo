@@ -11,7 +11,9 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 
 from keo.audio_info import cover_bytes, load
+from keo.catalog import CatalogError
 from keo.library import Job, Song, inside_music, unique_title_file
+from keo.match import Name, is_close
 from keo.recycle import (
     delete_from_recycle,
     empty_recycle,
@@ -110,11 +112,15 @@ def _row(services, key: tuple[str, str], jobs: list[Job], song: Song | None = No
         details = heard.rows if heard else ()
         size = path.stat().st_size if path else None
 
+    album = song.album or "" if song is not None else ""
+    spotify_id = (song.spotify_id if song is not None else None) or (jobs[0].spotify_id if jobs else None) or ""
+    video_id = (song.video_id if song is not None else None) or (jobs[0].video_id if jobs else None) or ""
     return SimpleNamespace(
         href=href, color=color, label=label, artist=artist, title=title,
-        path=str(path) if path else "", size=size,
+        album=album, path=str(path) if path else "", size=size,
         size_human=_format_bytes(size) if size is not None else "",
         can_delete=True, ident=ident, cover=cover, kind=kind,
+        spotify_id=spotify_id, video_id=video_id,
         quality=quality, details=details,
     )
 
@@ -223,26 +229,43 @@ def _library_stats(rows: list[SimpleNamespace]) -> str:
     return " · ".join(parts)
 
 
-def _library_page_data(services, filter: str = "all", q: str = "", sort: str = "artist") -> dict:
+def _library_page_data(
+    services,
+    filter: str = "all",
+    q: str = "",
+    sort: str = "artist",
+    artist: str = "",
+) -> dict:
     settings = services.spotdl.settings
     all_rows = _collect_rows(services)
     missing_rows = [r for r in all_rows if not r.path and r.label not in {"Queued", "Downloading"}]
     upgradable_rows = [r for r in all_rows if _is_upgradable(r, settings)]
     unmatched_rows = [r for r in all_rows if r.kind == "song"]
+    in_album_rows = [r for r in all_rows if r.album]
+    no_album_rows = [r for r in all_rows if not r.album]
     if filter == "missing":
         rows = missing_rows
     elif filter == "upgradable":
         rows = upgradable_rows
     elif filter == "unmatched":
         rows = unmatched_rows
+    elif filter == "in_album":
+        rows = in_album_rows
+    elif filter == "no_album":
+        rows = no_album_rows
     else:
         filter = "all"
         rows = all_rows
+    artist_q = artist.strip().casefold()
+    if artist_q:
+        rows = [r for r in rows if artist_q in (r.artist or "").casefold()]
     query = q.strip().casefold()
     if query:
         rows = [
             r for r in rows
-            if query in (r.artist or "").casefold() or query in (r.title or "").casefold()
+            if query in (r.artist or "").casefold()
+            or query in (r.title or "").casefold()
+            or query in (r.album or "").casefold()
         ]
     if sort == "title":
         rows = sorted(rows, key=lambda r: (r.title or "").casefold())
@@ -256,11 +279,14 @@ def _library_page_data(services, filter: str = "all", q: str = "", sort: str = "
         "filter": filter,
         "q": q,
         "sort": sort,
+        "artist": artist,
         "stats": _library_stats(all_rows),
         "total_count": len(all_rows),
         "missing_count": len(missing_rows),
         "upgradable_count": len(upgradable_rows),
         "unmatched_count": len(unmatched_rows),
+        "in_album_count": len(in_album_rows),
+        "no_album_count": len(no_album_rows),
     }
 
 
@@ -343,9 +369,14 @@ def _bulk_library_items(services, action: str, items: list[str]) -> None:
                         services.library.forget_spotify(ident)
                     else:
                         services.library.forget_video(ident)
+                    spotify_url = (
+                        f"https://open.spotify.com/track/{song.spotify_id}"
+                        if song.spotify_id
+                        else None
+                    )
                     services.worker.submit(
                         song.video_id, song.artist, song.title,
-                        source="library", spotify_id=song.spotify_id,
+                        source="library", spotify_url=spotify_url, spotify_id=song.spotify_id,
                     )
         elif action == "delete":
             if any(job.status in {"queued", "running"} for job in jobs):
@@ -522,9 +553,12 @@ def _redownload(services, kind: str, ident: str, jobs: list[Job], *, allow_upgra
     if failed is not None:
         return queued(services.worker.retry(failed.id))
     newest = jobs[0]
+    spotify_url = newest.spotify_url or (
+        f"https://open.spotify.com/track/{newest.spotify_id}" if newest.spotify_id else None
+    )
     job = services.worker.submit(
         newest.video_id, newest.artist, newest.title,
-        source="library", spotify_url=newest.spotify_url, spotify_id=newest.spotify_id,
+        source="library", spotify_url=spotify_url, spotify_id=newest.spotify_id,
     )
     if job is None:
         raise HTTPException(status_code=409, detail="Already in the library.")
@@ -581,3 +615,91 @@ def download_video(request: Request, video_id: str):
         if job.spotify_id is None and job.video_id == video_id
     ]
     return _redownload(services, "video", video_id, jobs)
+
+
+def _catalog_http_error(exc: CatalogError) -> HTTPException:
+    msg = str(exc)
+    status = 503 if "not configured" in msg.lower() else 502
+    return HTTPException(status_code=status, detail=msg)
+
+
+@router.get("/api/library/artist-check", **API)
+def check_artist_releases(request: Request, artist: str = ""):
+    query = artist.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Artist name is required")
+    services = get_services(request)
+    try:
+        found = services.catalog.find_artist(query)
+        if found is None:
+            return {
+                "found": False,
+                "artist": query,
+                "channel_id": None,
+                "total": 0,
+                "owned_count": 0,
+                "missing_count": 0,
+                "tracks": [],
+            }
+        channel_id, _ = found
+        resolved_name, songs = services.catalog.artist_releases(channel_id)
+    except CatalogError as exc:
+        raise _catalog_http_error(exc) from exc
+
+    tracks = []
+    owned_count = 0
+    for row in songs:
+        artists_str = row.all_artists or resolved_name or query
+        owned = services.library.is_owned(row.video_id, artists_str, row.title)
+        if owned:
+            owned_count += 1
+        tracks.append(
+            {
+                "video_id": row.video_id,
+                "title": row.title,
+                "artists": artists_str,
+                "album": row.album or "",
+                "in_album": bool(row.album),
+                "owned": owned,
+                "active": services.library.active_job(row.video_id) is not None,
+            }
+        )
+    return {
+        "found": True,
+        "artist": resolved_name or query,
+        "channel_id": channel_id,
+        "total": len(tracks),
+        "owned_count": owned_count,
+        "missing_count": len(tracks) - owned_count,
+        "tracks": tracks,
+    }
+
+
+@router.post("/api/library/{kind}/{ident}/check-album", **API)
+def check_song_album(request: Request, kind: str, ident: str):
+    if kind not in ("spotify", "video", "song"):
+        raise HTTPException(status_code=404, detail="Not found")
+    services = get_services(request)
+    song = services.library.get_song_by_identifier(kind, ident)
+    jobs = _matching_jobs(services, kind, ident)
+    if song is None and not jobs:
+        raise HTTPException(status_code=404, detail="Unknown song")
+    artist = song.artist if song is not None else jobs[0].artist
+    title = song.title if song is not None else jobs[0].title
+    video_id = song.video_id if song is not None else jobs[0].video_id
+    try:
+        candidates = services.catalog.search(f"{artist} {title}".strip())
+    except CatalogError as exc:
+        raise _catalog_http_error(exc) from exc
+
+    matched = next((r for r in candidates if video_id and r.video_id == video_id), None)
+    if matched is None:
+        matched = next(
+            (r for r in candidates if is_close(Name(artist, title), Name(r.all_artists, r.title))),
+            None,
+        )
+    if matched is not None and matched.album:
+        if song is not None:
+            services.library.set_song_album(song.id, matched.album)
+        return {"found": True, "album": matched.album, "video_id": matched.video_id}
+    return {"found": False, "album": "", "video_id": matched.video_id if matched else ""}

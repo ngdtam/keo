@@ -819,3 +819,72 @@ def test_song_api_uses_human_size(logged_in, library, tmp_path, monkeypatch):
     song = logged_in.get("/api/library/spotify/sp1").json()["song"]
     assert song["size_human"] == "0 KB"
     assert "bytes" not in song["size_human"]
+    assert song["spotify_id"] == "sp1"
+    assert song["video_id"] == "vid1"
+
+
+def test_library_album_filters_artist_filter_and_ytm_checks(logged_in, library, catalog, tmp_path):
+    from keo.records import SongRow
+
+    music = tmp_path / "music"
+    music.mkdir(parents=True, exist_ok=True)
+    f1 = music / "Artist A - Track 1.mp3"
+    f1.write_bytes(b"a")
+    f2 = music / "Artist A - Track 2.mp3"
+    f2.write_bytes(b"b")
+    f3 = music / "Artist B - Other.mp3"
+    f3.write_bytes(b"c")
+
+    s1 = library.upsert_scanned_song("Artist A", "Track 1", str(f1))
+    library.set_audio_cache(s1.id, audio_path=str(f1), mtime=1.0, size=1, card="MP3", details=(), has_cover=False, album="Debut Album")
+    s2 = library.upsert_scanned_song("Artist A", "Track 2", str(f2))
+    library.set_audio_cache(s2.id, audio_path=str(f2), mtime=1.0, size=1, card="MP3", details=(), has_cover=False)
+    s3 = library.upsert_scanned_song("Artist B", "Other", str(f3))
+    library.set_audio_cache(s3.id, audio_path=str(f3), mtime=1.0, size=1, card="MP3", details=(), has_cover=False)
+
+    all_data = logged_in.get("/api/library").json()
+    assert all_data["in_album_count"] == 1
+    assert all_data["no_album_count"] == 2
+
+    in_alb = logged_in.get("/api/library?filter=in_album").json()
+    assert [r["title"] for r in in_alb["rows"]] == ["Track 1"]
+
+    no_alb = logged_in.get("/api/library?filter=no_album").json()
+    assert {r["title"] for r in no_alb["rows"]} == {"Track 2", "Other"}
+
+    by_artist = logged_in.get("/api/library?artist=Artist%20A").json()
+    assert {r["title"] for r in by_artist["rows"]} == {"Track 1", "Track 2"}
+
+    by_album_q = logged_in.get("/api/library?q=Debut").json()
+    assert [r["title"] for r in by_album_q["rows"]] == ["Track 1"]
+
+    # Artist check endpoint
+    catalog.songs = [
+        SongRow("vid1", "Track 1", ("Artist A",), "Debut Album"),
+        SongRow("vid2", "Missing Hit", ("Artist A", "Guest"), None),
+    ]
+    res_art = logged_in.get("/api/library/artist-check?artist=Artist%20A")
+    assert res_art.status_code == 200
+    body = res_art.json()
+    assert body["found"] is True
+    assert body["owned_count"] == 1
+    assert body["missing_count"] == 1
+    assert body["tracks"][1]["in_album"] is False
+    assert body["tracks"][1]["owned"] is False
+
+    # Empty artist returns 400
+    assert logged_in.get("/api/library/artist-check?artist=").status_code == 400
+
+    # Check song album endpoint updates DB when found
+    catalog.songs = [SongRow("vid_t2", "Track 2", ("Artist A",), "Second Album")]
+    res_alb = logged_in.post(f"/api/library/song/{s2.id}/check-album")
+    assert res_alb.status_code == 200
+    assert res_alb.json() == {"found": True, "album": "Second Album", "video_id": "vid_t2"}
+    assert library.get_song(s2.id).album == "Second Album"
+
+    # Returns found=False when YTMusic has no album
+    catalog.songs = [SongRow("vid_t3", "Other", ("Artist B",), None)]
+    res_none = logged_in.post(f"/api/library/song/{s3.id}/check-album")
+    assert res_none.status_code == 200
+    assert res_none.json()["found"] is False
+

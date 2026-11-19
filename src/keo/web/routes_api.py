@@ -251,8 +251,16 @@ def api_dashboard(request: Request):
 
 
 @router.get("/api/library", **API, tags=["Library"])
-def api_library(request: Request, filter: str = "all", q: str = "", sort: str = "artist"):
-    data = _library_page_data(get_services(request), filter=filter, q=q, sort=sort)
+def api_library(
+    request: Request,
+    filter: str = "all",
+    q: str = "",
+    sort: str = "artist",
+    artist: str = "",
+):
+    data = _library_page_data(
+        get_services(request), filter=filter, q=q, sort=sort, artist=artist
+    )
     data["rows"] = [vars(r) for r in data["rows"]]
     return data
 

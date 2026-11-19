@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +38,50 @@ def _read_embedded_tags(path: Path) -> tuple[str, str]:
     return "", ""
 
 
+def read_album_tag(path: Path) -> str | None:
+    """Read the embedded album tag from an audio file, if present."""
+    try:
+        from mutagen import File
+    except ImportError:
+        return None
+    try:
+        audio = File(path, easy=True)
+        if audio and getattr(audio, "tags", None):
+            albums = audio.tags.get("album") or []
+            album = str(albums[0]).strip() if albums else ""
+            return album or None
+    except Exception:
+        pass
+    return None
+
+
+_SPOTIFY_URL_RE = re.compile(r"open\.spotify\.com/track/([A-Za-z0-9]+)")
+
+
+def read_spotify_id_tag(path: Path) -> str | None:
+    """Recover a Spotify track ID from embedded WOAS / URL tags if present."""
+    try:
+        from mutagen import File
+    except ImportError:
+        return None
+    try:
+        audio = File(path)
+        tags = getattr(audio, "tags", None)
+        if not tags:
+            return None
+        for key in ("WOAS", "woas", "purl", "url", "website"):
+            val = tags.get(key)
+            if val is None:
+                continue
+            text = str(getattr(val, "url", val))
+            match = _SPOTIFY_URL_RE.search(text)
+            if match:
+                return match.group(1)
+    except Exception:
+        pass
+    return None
+
+
 def read_tags(path: Path) -> tuple[str, str]:
     """Read (artist, title) from audio tags, falling back to 'Artist - Title' filename."""
     artist, title = _read_embedded_tags(path)
@@ -51,6 +96,18 @@ def read_tags(path: Path) -> tuple[str, str]:
 
 def _has_cover(path: Path) -> bool:
     return cover_bytes(path) is not None
+
+
+def _sync_spotify_tags(library: Library, song: object, path: Path) -> None:
+    if not getattr(song, "spotify_id", None):
+        return
+    tag_artist, tag_title = _read_embedded_tags(path)
+    if tag_artist or tag_title:
+        library.sync_song_metadata(
+            song.id,
+            artist=tag_artist or None,
+            title=tag_title or None,
+        )
 
 
 def _cache_song(
@@ -70,6 +127,7 @@ def _cache_song(
         card=view.card if view else None,
         details=view.rows if view else (),
         has_cover=bool(cover_checker(path)),
+        album=read_album_tag(path),
     )
 
 
@@ -99,12 +157,23 @@ def scan(
     for path_str, (path, st) in files.items():
         current = by_path.get(path_str)
         if current is not None and current.audio_mtime == st.st_mtime and current.has_cover is not None:
+            if current.album is None:
+                tag_album = read_album_tag(path)
+                if tag_album:
+                    library.set_song_album(current.id, tag_album)
+            _sync_spotify_tags(library, current, path)
             continue
         artist, title = read_tags(path)
         song = library.upsert_scanned_song(artist, title, path_str)
+        if song.spotify_id is None:
+            recovered_id = read_spotify_id_tag(path)
+            if recovered_id:
+                library.set_song_spotify_id(song.id, recovered_id)
+                song = library.get_song(song.id) or song
         is_new = song.id not in existing_ids
         existing_ids.add(song.id)
         _cache_song(library, song.id, path, st, audio_loader, cover_checker)
+        _sync_spotify_tags(library, song, path)
         if is_new:
             added += 1
         else:
@@ -129,6 +198,7 @@ def refresh_song_cache(
     except OSError:
         return
     _cache_song(library, song.id, path, st, audio_loader, cover_checker)
+    _sync_spotify_tags(library, song, path)
 
 
 def plan_organize(
